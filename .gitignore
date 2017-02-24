@@ -88,5 +88,12 @@ ENV/
 # Rope project settings
 .ropeproject
 
+## Below elements were defined by Dongmin Kim
 # JetBrains IDE
 .idea/
+
+# Log dir
+first-contact-with-tensorflow/log
+
+# Chapter 4-1. MNIST_data
+first-contact-with-tensorflow/MNIST_data
