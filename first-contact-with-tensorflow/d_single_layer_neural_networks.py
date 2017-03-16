@@ -71,7 +71,7 @@ merged_summary = tf.summary.merge_all()
 # 4. 텐서플로우 알고리즘 실행
 ############################
 sess = tf.Session()
-writer = tf.summary.FileWriter("./log/4-1", sess.graph)
+writer = tf.summary.FileWriter("./log/d_single_layer_neural_networks", sess.graph)
 
 # 변수들 초기화
 init = tf.global_variables_initializer()
