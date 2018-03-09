@@ -3,11 +3,10 @@
 * 구글 [텐서플로우](https://www.tensorflow.org) 개인 공부용 레포
 * Repo for studying [Google TensorFlow](https://www.tensorflow.org).
 
-## Prerequisites
-* Python 2.7.x
-* Google TensorFlow r1.0
-
 ## Folders
 * first-contact-with-tensorflow
   * '텐서플로 첫걸음' 예제들
   * Examples from the book 'First Contact with TensorFlow'.
+* deeplearning-tensorflow-keras
+  * '정석으로 배우는 딥러닝' 예제들
+  * Examples from the book '詳解ディープラーニング'.
