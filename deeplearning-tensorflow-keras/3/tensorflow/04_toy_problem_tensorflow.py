@@ -3,6 +3,9 @@ from sklearn import datasets
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 
+import sklearn
+print(sklearn.__version__)
+
 N = 300
 X, y = datasets.make_moons(N, noise=0.3)
 Y = y.reshape(N, 1)

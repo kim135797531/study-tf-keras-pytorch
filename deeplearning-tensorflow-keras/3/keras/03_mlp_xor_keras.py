@@ -18,7 +18,7 @@ model.add(Activation('sigmoid'))
 
 model.compile(loss='binary_crossentropy', optimizer=SGD(lr=0.1))
 
-model.fit(X, Y, epochs=4000, batch_size=4)
+model.fit(X, Y, epochs=8000, batch_size=4)
 
 classes = model.predict_classes(X, batch_size=4)
 prob = model.predict_proba(X, batch_size=4)

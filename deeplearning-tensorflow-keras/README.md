@@ -4,7 +4,7 @@
 
 ## Prerequisites
 * Python 3.x
-* Google TensorFlow r1.6
+* Google TensorFlow r1.10.0
 
 ## 코드 원본 (출판사 배포)
 * https://github.com/yusugomori/deeplearning-tensorflow-keras
