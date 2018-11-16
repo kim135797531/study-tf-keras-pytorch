@@ -10,3 +10,6 @@
 * deeplearning-tensorflow-keras
   * '정석으로 배우는 딥러닝' 예제들
   * Examples from the book '詳解ディープラーニング'.
+* pytorch-fastcampus
+  * 'PyTorch로 시작하는 딥러닝 입문 CAMP' 예제들
+  * Examples from the lecture 'PyTorch로 시작하는 딥러닝 입문 CAMP'
