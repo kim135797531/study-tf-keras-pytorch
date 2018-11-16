@@ -70,5 +70,5 @@ multi_start = datetime.datetime.now()
 sess.run(sum_with_multi_gpu)
 multi_end = datetime.datetime.now()
 
-print "Single GPU computation time: " + str(single_end - single_start)
-print "Multi GPU computation time: " + str(multi_end - multi_start)
+print("Single GPU computation time: " + str(single_end - single_start))
+print("Multi GPU computation time: " + str(multi_end - multi_start))

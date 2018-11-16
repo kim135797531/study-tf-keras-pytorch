@@ -3,5 +3,5 @@
 * '텐서플로 첫걸음' 공부용 레포
 
 ## Prerequisites
-* Python 2.7.x
+* Python 3.6
 * Google TensorFlow r1.0

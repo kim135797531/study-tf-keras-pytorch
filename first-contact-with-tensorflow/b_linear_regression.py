@@ -27,7 +27,7 @@ LEARN_SPEED = 0.5
 num_points = NUM_POINTS
 vectors_set = []
 
-for i in xrange(num_points):
+for i in range(num_points):
     x1 = np.random.normal(0.0, 0.55)
     y1 = x1 * 0.1 + 0.3 + np.random.normal(0.0, 0.03)
     vectors_set.append([x1, y1])
@@ -65,13 +65,13 @@ init = tf.global_variables_initializer()
 sess.run(init)
 
 # 12번 반복 학습
-for step in xrange(NUM_LEARNS):
+for step in range(NUM_LEARNS):
     sess.run(train)
-    print step, sess.run(W), sess.run(b)
+    print(step, sess.run(W), sess.run(b))
     plt.plot(x_data, sess.run(W) * x_data + sess.run(b))
 
 # 학습된 W와 b 출력
-print sess.run(W), sess.run(b)
+print(sess.run(W), sess.run(b))
 
 ############################
 # 4. 데이터셋 그래프로 출력 해 보기

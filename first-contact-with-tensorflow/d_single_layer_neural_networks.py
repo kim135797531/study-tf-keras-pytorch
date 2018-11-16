@@ -92,5 +92,5 @@ for i in range(NUM_LEARNS):
 
     # 텐서보드에 결과 출력
     writer.add_summary(merged_summary_value, i)
-    print accuracy_value
+    print(accuracy_value)
 

@@ -30,7 +30,7 @@ num_points = NUM_POINTS
 vectors_set = []
 
 # [[0.1, 0.1], [3.0, 1.0], ... , [3.0, 1.0]]
-for i in xrange(num_points):
+for i in range(num_points):
     if np.random.random() > 0.5:
         vectors_set.append([np.random.normal(0.0, 0.9),
                             np.random.normal(0.0, 0.9)])
@@ -100,7 +100,7 @@ assignments = tf.argmin(distances, 0)
 # 참고로 if 문으로 텐서를 순회하며 군집을 찾을 것을, equal 과 where 함수로 처리함
 new_centroid_set = []
 
-for c in xrange(k):
+for c in range(k):
     cluster_indexes = tf.squeeze(tf.where(tf.equal(assignments, c)))
     cluster_vectors = tf.gather(vectors, cluster_indexes)
     reduced_mean = tf.reduce_mean(cluster_vectors, 0)
@@ -145,7 +145,7 @@ sess.run(init)
 #
 # centroids 노드와 assignments 노드는 update_centroids 의 하위 노드로서 어차피 실행되므로 굳이 실행할 필요가 없음
 # 학습 도중 값을 보고 싶다면 실행하고, 아니면 아래 소스처럼 학습이 끝난 후 한 번 호출해서 값만 확인하면 됨
-for step in xrange(NUM_LEARNS):
+for step in range(NUM_LEARNS):
     sess.run(update_centroids)
 
 centroid_values, assignment_values = sess.run([centroids, assignments])
@@ -157,7 +157,7 @@ centroid_values, assignment_values = sess.run([centroids, assignments])
 data = {"x": [], "y": [], "cluster": []}
 
 # dict의 각 항목에 데이터 삽입
-for i in xrange(len(assignment_values)):
+for i in range(len(assignment_values)):
     data["x"].append(vectors_set[i][0])
     data["y"].append(vectors_set[i][1])
     data["cluster"].append(assignment_values[i])

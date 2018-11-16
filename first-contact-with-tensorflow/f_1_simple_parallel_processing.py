@@ -35,4 +35,4 @@ for gpu in GPU_LIST:
 # 2. 텐서플로우 알고리즘 실행
 ############################
 sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
-print sess.run(result)
+print(sess.run(result))
