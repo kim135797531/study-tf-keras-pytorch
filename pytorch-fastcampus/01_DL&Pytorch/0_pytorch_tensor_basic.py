@@ -5,6 +5,8 @@
 #
 # https://github.com/GunhoChoi/PyTorch-FastCampus
 #
+# PyTorch의 기초 문법을 배운다.
+#
 
 import numpy as np
 import torch
