@@ -192,8 +192,8 @@ if __name__ == "__main__":
     LOG_INTERVAL = 1
     env = gym.make('CartPole-v1')
     """
-    상태 공간 8개, 범위 -∞ < s < ∞
-    행동 공간 2개, 범위 -1 < a < 1
+    상태 공간 4개, 범위 -∞ < s < ∞
+    행동 공간 1개, 이산값 0 or 1
     """
     state_size = env.observation_space.shape[0]
     action_size = env.action_space.n
