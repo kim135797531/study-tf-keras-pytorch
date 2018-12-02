@@ -124,7 +124,9 @@ class DDPGAgent(TorchSerializable):
         # Adam 하이퍼 파라미터
         self.learning_rate_actor = 0.0001
         self.learning_rate_critic = 0.001
-        # TODO: 뭔 뜻인지 찾아보자
+        # 그냥 오차함수에 가중치의 제곱합을 더한 뒤, 이것을 최소화 하는 기술
+        # E(w) = mean(E(w)+ λ/2*(|w|^2))
+        # 이렇게 하면 조금이라도 더 작은 가중치가 선호되게 된다
         self.l2_weight_decay = 0.01
 
         # 평가망 학습 하이퍼 파라미터
@@ -214,7 +216,9 @@ class DDPGAgent(TorchSerializable):
         predicted_actions = self.actor(state_batch)
         q_output = self.critic(state_batch, predicted_actions)
         # actor_loss = -1*torch.sum(q_output).to(device)
-        # TODO: sum 이 아니라 mean 인 이유
+        # sum 이 아니라 mean 인 이유
+        # -> sum이든 mean이든 똑같으나 (N은 같으므로)
+        # -> sum 했을 때 값이 많이 커지니까 그냥 보기 좋게 mean으로..
         actor_loss = -1 * torch.mean(q_output).to(device)
 
         # 정책망의 예측 보상을 정책 그라디언트로 업데이트
@@ -310,7 +314,8 @@ if __name__ == "__main__":
     EPISODES = 30000
 
     device = u.set_device(force_cpu=False)
-    viz = Drawer(reset=True, env='main')
+    viz_env_name = os.path.basename(os.path.realpath(__file__))
+    viz = Drawer(reset=True, env=viz_env_name)
 
     metadata = TrainerMetadata()
     checkpoint_inst = Checkpoint(VERSION, IS_SAVE, SAVE_INTERVAL)

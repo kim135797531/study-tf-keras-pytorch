@@ -6,6 +6,7 @@
 # https://github.com/pytorch/examples/blob/master/reinforcement_learning/actor_critic.py
 #
 
+import os
 import sys
 import time
 from collections import namedtuple
@@ -216,7 +217,8 @@ if __name__ == "__main__":
     EPISODES = 10000
 
     device = u.set_device(force_cpu=False)
-    viz = Drawer(reset=True, env='main')
+    viz_env_name = os.path.basename(os.path.realpath(__file__))
+    viz = Drawer(reset=True, env=viz_env_name)
 
     metadata = TrainerMetadata()
     checkpoint_inst = Checkpoint(VERSION, IS_SAVE, SAVE_INTERVAL)

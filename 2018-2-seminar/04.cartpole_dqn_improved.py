@@ -6,6 +6,7 @@
 # https://pytorch.org/tutorials/_downloads/reinforcement_q_learning.py
 #
 
+import os
 import sys
 import random
 import time
@@ -232,7 +233,8 @@ if __name__ == "__main__":
     EPISODES = 30000
 
     device = u.set_device(force_cpu=False)
-    viz = Drawer(reset=True, env='main')
+    viz_env_name = os.path.basename(os.path.realpath(__file__))
+    viz = Drawer(reset=True, env=viz_env_name)
 
     metadata = TrainerMetadata()
     checkpoint_inst = Checkpoint(VERSION, IS_SAVE, SAVE_INTERVAL)
