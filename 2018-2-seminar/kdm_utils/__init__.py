@@ -8,9 +8,19 @@ from visdom import Visdom
 #####################
 # Torch 관련
 #####################
-def get_device(force_cpu=False):
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    return torch.device('cpu') if force_cpu else device
+# TODO: 글로벌 변수..?
+global_device = None
+
+
+def set_device(force_cpu=False):
+    global global_device
+
+    if force_cpu:
+        global_device = torch.device('cpu')
+    else:
+        global_device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+    return global_device
 
 
 # 머신 숫자 표현 최저값
@@ -22,22 +32,26 @@ def get_np_float32_eps():
 # Torch 텐서 관련
 #####################
 def t_uint8(item, device=None):
-    device = device if device else get_device()
+    global global_device
+    device = device if device else global_device
     return torch.tensor([item], device=device, dtype=torch.float32)
 
 
 def t_float32(item, device=None):
-    device = device if device else get_device()
+    global global_device
+    device = device if device else global_device
     return torch.tensor([item], device=device, dtype=torch.float32)
 
 
 def t_long(item, device=None):
-    device = device if device else get_device()
+    global global_device
+    device = device if device else global_device
     return torch.tensor([item], device=device, dtype=torch.long)
 
 
 def t_from_np_to_float32(item, device=None):
-    device = device if device else get_device()
+    global global_device
+    device = device if device else global_device
     return torch.from_numpy(item).float().to(device)
 
 

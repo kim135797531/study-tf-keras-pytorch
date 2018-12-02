@@ -118,7 +118,7 @@ class DQNAgent(TorchSerializable):
 
         target = []
         target_val = []
-
+        
         # 정책망에 각각의 기억에 대해 상태를 넣어서 각각의 액션 보상을 구한다.
         # 그 다음에 선택한 액션 쪽의 보상을 가져온다.
         for i in range(self.batch_size):
@@ -198,12 +198,13 @@ class TrainerMetadata(TorchSerializable):
             viz.draw_line(x=e, y=self.last_losses[e].item(), name='last_loss')
         print("Loading complete. Resuming from episode: {}, score: {:.2f}".format(self.current_epoch - 1, max(self.scores, default=0)))
 
-    def finish_episode(self, viz, episode, score, last_loss):
+    def finish_episode(self, viz, episode, score, last_loss, seongkwageup):
         # 정책망의 가중치를 가져와서 타겟망의 가중치에 덮어씌운다
         agent.update_target_model()
 
         score = score.item()
-        score = score if score == 500.0 else score + 100
+        score = score if score == 500.0 else score + 400
+        score -= seongkwageup
         self.current_epoch = episode
         self.scores.append(score)
         self.last_losses.append(last_loss)
@@ -215,6 +216,21 @@ class TrainerMetadata(TorchSerializable):
             viz.draw_line(y=score, x=episode, name='score')
             viz.draw_line(y=last_loss.item(), x=episode, name='last_loss')
             viz.draw_line(y=agent.epsilon, x=episode, name='epsilon')
+
+
+def god_seokyong_reward_method_step(action, t):
+    next_state, reward, done, _ = env.step(action)
+    seokyong_reward = 0
+    if t == 100:
+        seokyong_reward += 100
+    if t == 200:
+        seokyong_reward += 100
+    if t == 300:
+        seokyong_reward += 100
+    if t == 400:
+        seokyong_reward += 100
+    reward += seokyong_reward
+    return next_state, reward, seokyong_reward, done, _
 
 
 if __name__ == "__main__":
@@ -246,12 +262,16 @@ if __name__ == "__main__":
         state = env.reset()
         score = last_loss = u.t_float32(0)
 
+        seongkwageup = 0
         # 각 에피소드당 환경에 정의된 최대 스텝 수만큼 돌린다
         # 단 그 전에 환경에서 정의된 종료 상태(done)가 나오면 거기서 끝낸다
         for t in range(env.spec.max_episode_steps):
             action = agent.get_action(state)
-            next_state, reward, done, _ = env.step(action)
-            reward = reward if not done or score == 499 else -100
+            next_state, reward, seokyong_reward, done, _ = god_seokyong_reward_method_step(action, t)
+            seongkwageup += seokyong_reward
+            # next_state, reward, seokyong_reward, done, _ = env.step(action)
+            reward = reward if not done or score == 499 + seongkwageup else -400
+            # reward = reward if not done or score == 499 else -100
 
             agent.append_sample(state, action, reward, next_state, done)
 
@@ -264,11 +284,15 @@ if __name__ == "__main__":
             env.render() if RENDER else None
             if done: break
 
-        metadata.finish_episode(viz, episode, score, last_loss)
+        metadata.finish_episode(viz, episode, score, last_loss, seongkwageup)
 
         if IS_SAVE:
             metadata.save(checkpoint_inst)
 
+        # if score > env.spec.reward_threshold:
+        #     print("Solved! Running reward is now {}".format(score))
+        #     break
+
         # 이전 10개 에피소드의 점수 평균이 490보다 크면 학습 중단
-        if np.mean(metadata.scores[-min(10, len(metadata.scores)):]) > 490:
-            sys.exit()
+        # if np.mean(metadata.scores[-min(10, len(metadata.scores)):]) > 490 + 400:
+        #     sys.exit()

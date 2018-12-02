@@ -5,8 +5,6 @@ from abc import ABCMeta, abstractmethod
 import shutil
 import torch
 
-from kdm_utils import get_device
-
 
 class TorchSerializable(object):
     __metaclass__ = ABCMeta
@@ -50,13 +48,14 @@ class Checkpoint:
 
     def save_checkpoint(self, full_path, var_state, is_best=False):
         dir_path, base_name = self._split_path_base(full_path)
-        full_path = "{}/saved_model/{}/{}.ep{}.pt".format(dir_path, self.version, base_name,
-                                                          str(var_state['current_epoch']))
+        episode_path = "{}/saved_model/{}/{}.ep{}.pt".format(dir_path, self.version, base_name,
+                                                             str(var_state['current_epoch']))
         var_state['version'] = self.version
-        torch.save(var_state, full_path)
+        torch.save(var_state, episode_path)
         if is_best:
-            shutil.copyfile(full_path, self.get_best_model_file_name(full_path))
+            shutil.copyfile(episode_path, self.get_best_model_file_name(full_path))
 
     def load_model(self, full_path=None, device=None):
-        device = device if device else get_device()
+        global global_device
+        device = device if device else global_device
         return torch.load(full_path, map_location=device)

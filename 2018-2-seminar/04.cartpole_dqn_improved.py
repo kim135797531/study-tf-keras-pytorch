@@ -8,6 +8,7 @@
 
 import sys
 import random
+import time
 from collections import namedtuple
 from itertools import compress
 
@@ -18,73 +19,27 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 import gym
-from visdom import Visdom
 
-#####################
-# 1. 공통 환경설정과 유틸리티
-#####################
-Visdom().delete_env('main')
-viz = Visdom()
-
-# CPU로 할래 GPU로 할래?
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-# device = torch.device('cpu')
-
-# 머신 숫자 표현 최저값
-eps = np.finfo(np.float32).eps.item()
+import kdm_utils as u
+from kdm_utils.checkpoint import Checkpoint, TorchSerializable
+from kdm_utils.drawer import Drawer
+from kdm_utils.replay_memory import ReplayMemory
 
 
-def _t_uint8(item):
-    return torch.tensor([item], device=device, dtype=torch.float32)
-
-
-def _t_float32(item):
-    return torch.tensor([item], device=device, dtype=torch.float32)
-
-
-def _t_long(item):
-    return torch.tensor([item], device=device, dtype=torch.long)
-
-
-def _t_from_np_to_float32(item):
-    return torch.from_numpy(item).float().to(device)
-
-
-#####################
-# 2. 데이터 형태 정의
-#####################
+# Python Pickle은 nested namedtuple save를 지원하지 않음
+# https://stackoverflow.com/questions/4677012/python-cant-pickle-type-x-attribute-lookup-failed
 Transition = namedtuple('Transition', ('state', 'action', 'reward', 'next_state', 'done'))
 
 
-class ReplayMemory:
-    def __init__(self, capacity):
-        self.capacity = capacity
-        self.memory = []
-        self.position = 0
-
-    def push(self, *args):
-        if len(self.memory) < self.capacity:
-            self.memory.append(None)
-        self.memory[self.position] = Transition(*args)
-        self.position = (self.position + 1) % self.capacity
-
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
-
-    def __len__(self):
-        return len(self.memory)
-
-
-#####################
-# 3. 학습 알고리즘 정의
-#####################
 class DQN(nn.Module):
 
     def __init__(self, state_size, action_size):
         super(DQN, self).__init__()
-        self.linear1 = nn.Linear(state_size, 24)
-        self.linear2 = nn.Linear(24, 24)
-        self.head = nn.Linear(24, action_size)
+        self.layer_sizes = [state_size, 24, 24, action_size]
+
+        self.linear1 = nn.Linear(self.layer_sizes[0], self.layer_sizes[1])
+        self.linear2 = nn.Linear(self.layer_sizes[1], self.layer_sizes[2])
+        self.head = nn.Linear(self.layer_sizes[2], self.layer_sizes[3])
         nn.init.kaiming_uniform_(self.linear1.weight)
         nn.init.kaiming_uniform_(self.linear2.weight)
         nn.init.kaiming_uniform_(self.head.weight)
@@ -95,15 +50,25 @@ class DQN(nn.Module):
         return self.head(x)
 
 
-class DQNAgent:
+class DQNAgent(TorchSerializable):
 
     def __init__(self, state_size, action_size):
-        self.render = False
-        # self.load_model = False
+        self._set_hyper_parameters()
+
         self.state_size = state_size
         self.action_size = action_size
 
-        # DQN 파라미터
+        self.policy_model = DQN(self.state_size, self.action_size).to(device)
+        self.target_model = DQN(self.state_size, self.action_size).to(device)
+        self.update_target_model()
+        self.target_model.eval()
+
+        self.policy_optimizer = optim.Adam(self.policy_model.parameters(), lr=self.learning_rate_dqn)
+
+        self.transition_structure = Transition
+        self.memory = ReplayMemory(self.memory_maxlen, self.transition_structure)
+
+    def _set_hyper_parameters(self):
         self.discount_factor = 0.99
         self.learning_rate_dqn = 0.001
         self.train_start = 1000
@@ -113,14 +78,19 @@ class DQNAgent:
         self.batch_size = 64
         self.memory_maxlen = 2000
 
-        self.policy_model = DQN(self.state_size, self.action_size).to(device)
-        self.target_model = DQN(self.state_size, self.action_size).to(device)
-        self.update_target_model()
-        self.target_model.eval()
+    def state_dict_impl(self):
+        return {
+            'memory': self.memory.state_dict(),
+            'policy_model': self.policy_model.state_dict(),
+            'target_model': self.target_model.state_dict(),
+            'policy_optimizer': self.policy_optimizer.state_dict()
+        }
 
-        self.policy_optimizer = optim.Adam(self.policy_model.parameters(), lr=self.learning_rate_dqn)
-
-        self.memory = ReplayMemory(self.memory_maxlen)
+    def load_state_dict_impl(self, var_state):
+        self.memory.load_state_dict(var_state['memory'])
+        self.policy_model.load_state_dict(var_state['policy_model'])
+        self.target_model.load_state_dict(var_state['target_model'])
+        self.policy_optimizer.load_state_dict(var_state['policy_optimizer'])
 
     def update_target_model(self):
         # 정책망에서 타겟망으로 가중치 복사 (주로 한 에피소드 끝날 때마다 호출됨)
@@ -132,17 +102,17 @@ class DQNAgent:
             return random.randrange(self.action_size)
         else:
             # 현재 상태 기준으로 정책망에서 행동 보상을 예측한 값을 갖고 오고, 큰 쪽을 행동으로 취한다
-            state = _t_from_np_to_float32(state)
+            state = u.t_from_np_to_float32(state)
             _, index = self.policy_model(state).max(dim=0)
             return index.item()
 
     def append_sample(self, state, action, reward, next_state, done):
         self.memory.push(
-            _t_float32(state),
-            _t_long(action),
-            _t_float32(reward),
-            _t_float32(next_state),
-            _t_uint8(done)
+            u.t_float32(state),
+            u.t_long(action),
+            u.t_float32(reward),
+            u.t_float32(next_state),
+            u.t_uint8(done)
         )
 
     def train_model(self):
@@ -188,35 +158,106 @@ class DQNAgent:
         return loss
 
 
+class TrainerMetadata(TorchSerializable):
+
+    def __init__(self):
+        self.current_epoch = 0
+
+        self.scores = list()
+        self.best_score = 0
+
+        self.last_losses = list()
+
+    def state_dict_impl(self):
+        return {
+            'current_epoch': self.current_epoch + 1,
+            'scores': self.scores,
+            'best_score': self.best_score,
+            'last_losses': self.last_losses,
+            'agent': agent.state_dict()
+        }
+
+    def load_state_dict_impl(self, var_state):
+        self.current_epoch = var_state['current_epoch']
+        self.scores.extend(var_state['scores'])
+        self.best_score = var_state['best_score']
+        self.last_losses.extend(var_state['last_losses'])
+        agent.load_state_dict(var_state['agent'])
+
+    def save(self, checkpoint):
+        # state_dict 구성 속도가 느리므로 필요할 때만 구성
+        if checkpoint.is_saving_episode(self.current_epoch):
+            var_state = self.state_dict()
+            is_best = False
+            if max(self.scores) > self.best_score:
+                self.best_score = max(self.scores)
+                is_best = True
+
+            checkpoint.save_checkpoint(__file__, var_state, is_best)
+
+    def load(self, checkpoint, viz):
+        full_path = checkpoint.get_best_model_file_name(__file__)
+        print("Loading checkpoint '{}'".format(full_path))
+        var_state = checkpoint.load_model(full_path=full_path)
+        self.load_state_dict(var_state)
+        for e in range(0, len(self.scores)):
+            viz.draw_line(x=e, y=self.scores[e], name='score')
+            viz.draw_line(x=e, y=self.last_losses[e].item(), name='last_loss')
+        print("Loading complete. Resuming from episode: {}, score: {:.2f}".format(self.current_epoch - 1, max(self.scores, default=0)))
+
+    def finish_episode(self, viz, episode, score, last_loss):
+        # 정책망의 가중치를 가져와서 타겟망의 가중치에 덮어씌운다
+        agent.update_target_model()
+
+        score = score.item()
+        score = score if score == 500.0 else score + 100
+        self.current_epoch = episode
+        self.scores.append(score)
+        self.last_losses.append(last_loss)
+
+        if episode % LOG_INTERVAL == 0:
+            print('Episode {}\tScore: {:.2f}\tMem Length: {}\tEpsilon: {}\tCompute Time: {:.2f}'.format(
+                episode, score, len(agent.memory), agent.epsilon, time.time() - start_time))
+
+            viz.draw_line(y=score, x=episode, name='score')
+            viz.draw_line(y=last_loss.item(), x=episode, name='last_loss')
+            viz.draw_line(y=agent.epsilon, x=episode, name='epsilon')
+
+
 if __name__ == "__main__":
-    EPISODES = 1000
-    MAX_STEP = 3000
+    VERSION = 1
+    RENDER = True
     LOG_INTERVAL = 1
-    env = gym.make('CartPole-v1')
+    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 100
+    EPISODES = 30000
+
+    device = u.set_device(force_cpu=False)
+    viz = Drawer(reset=True, env='main')
+
+    metadata = TrainerMetadata()
+    checkpoint_inst = Checkpoint(VERSION, IS_SAVE, SAVE_INTERVAL)
+
     """
     상태 공간 4개, 범위 -∞ < s < ∞
     행동 공간 1개, 이산값 0 or 1
     """
+    env = gym.make('CartPole-v1')
     state_size = env.observation_space.shape[0]
     action_size = env.action_space.n
 
     agent = DQNAgent(state_size, action_size)
 
-    # 프로그램 흐름 제어 임시 변수
-    scores = list()
-    last_loss = torch.Tensor([0])
-
-    # 1 에피소드 = 카트 넘어가거나 3000스텝 넘게 버티거나
-    for e in range(EPISODES):
+    # 최대 에피소드 수만큼 돌린다
+    for episode in range(metadata.current_epoch, EPISODES):
+        start_time = time.time()
         state = env.reset()
-        score = 0
+        score = last_loss = u.t_float32(0)
 
-        # 각 에피소드마다 최대 3000스텝까지 시뮬레이션 한다
-        for t in range(MAX_STEP):
+        # 각 에피소드당 환경에 정의된 최대 스텝 수만큼 돌린다
+        # 단 그 전에 환경에서 정의된 종료 상태(done)가 나오면 거기서 끝낸다
+        for t in range(env.spec.max_episode_steps):
             action = agent.get_action(state)
             next_state, reward, done, _ = env.step(action)
-            if agent.render:
-                env.render()
             reward = reward if not done or score == 499 else -100
 
             agent.append_sample(state, action, reward, next_state, done)
@@ -226,20 +267,15 @@ if __name__ == "__main__":
 
             score += reward
             state = next_state
-            if done:
-                break
 
-        # 정책망의 가중치를 가져와서 타겟망의 가중치에 덮어씌운다
-        agent.update_target_model()
-        score = score if score == 500.0 else score + 100
-        scores.append(score)
-        if e % LOG_INTERVAL == 0:
-            print('Episode {}\tScore: {}\tMem Length: {}\t epsilon: {}'.format(e, score, len(agent.memory), agent.epsilon))
+            env.render() if RENDER else None
+            if done: break
 
-            viz.line(X=np.array([e]), Y=np.array([score]), name='score', win='reward', update='append', opts={'title':'score'})
-            viz.line(X=np.array([e]), Y=np.array([last_loss.item()]), name='loss', win='loss', update='append', opts={'title':'loss'})
-            viz.line(X=np.array([e]), Y=np.array([agent.epsilon]), name='epsilon', win='epsilon', update='append', opts={'title':'epsilon'})
+        metadata.finish_episode(viz, episode, score, last_loss)
+
+        if IS_SAVE:
+            metadata.save(checkpoint_inst)
 
         # 이전 10개 에피소드의 점수 평균이 490보다 크면 학습 중단
-        if np.mean(scores[-min(10, len(scores)):]) > 490:
+        if np.mean(metadata.scores[-min(10, len(metadata.scores)):]) > 490:
             sys.exit()

@@ -76,6 +76,7 @@ class Critic(nn.Module):
 
 
 class DDPGAgent(TorchSerializable):
+
     def __init__(self, state_size, action_size, action_range=(-1, 1)):
         self._set_hyper_parameters()
 
@@ -308,7 +309,7 @@ if __name__ == "__main__":
     IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 400
     EPISODES = 30000
 
-    device = u.get_device(force_cpu=False)
+    device = u.set_device(force_cpu=False)
     viz = Drawer(reset=True, env='main')
 
     metadata = TrainerMetadata()
