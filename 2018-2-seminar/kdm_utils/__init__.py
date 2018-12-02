@@ -51,16 +51,8 @@ def fanin_init(in_tensor):
     return tensor.uniform_(-bound, bound)
 
 
-def copy_without_bias(src_nn, dst_nn, tau=1.0):
-    src_state_dict = src_nn.state_dict()
-    dst_state_dict = dst_nn.state_dict()
-    for k in dst_state_dict.keys():
-        if 'weight' in k:
-            src_weight, dst_weight = src_state_dict[k], dst_state_dict[k]
-            dst_state_dict[k] = tau * src_weight + (1.0 - tau) * dst_weight
-        # TODO: 없애야함
-        # if 'bias' in k:
-        #     src_weight, dst_weight = src_state_dict[k], dst_state_dict[k]
-        #     dst_state_dict[k] = tau * src_weight + (1.0 - tau) * dst_weight
-    dst_nn.load_state_dict(dst_state_dict)
-    del dst_state_dict
+def soft_update_from_to(src_nn, dst_nn, tau=1.0):
+    for target_param, param in zip(dst_nn.parameters(), src_nn.parameters()):
+        target_param.data.copy_(
+            target_param.data * (1.0 - tau) + param.data * tau
+        )

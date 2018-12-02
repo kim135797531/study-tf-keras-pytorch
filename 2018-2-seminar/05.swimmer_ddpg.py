@@ -2,6 +2,7 @@
 # Swimmer-v2 with DDPG
 #
 
+import os
 import time
 from collections import namedtuple
 
@@ -220,13 +221,13 @@ class DDPGAgent(TorchSerializable):
         self.actor_optimizer.step()
 
         # 현재 평가망, 정책망의 가중치를 타겟 평가망에다 덮어쓰기
-        u.copy_without_bias(src_nn=self.critic, dst_nn=self.target_critic, tau=self.soft_target_update_tau)
-        u.copy_without_bias(src_nn=self.actor, dst_nn=self.target_actor, tau=self.soft_target_update_tau)
+        u.soft_update_from_to(src_nn=self.critic, dst_nn=self.target_critic, tau=self.soft_target_update_tau)
+        u.soft_update_from_to(src_nn=self.actor, dst_nn=self.target_actor, tau=self.soft_target_update_tau)
 
         # 그래프 그리기용
-        viz.draw_line(y=critic_loss.item(), interval=10, name="critic_loss")
-        viz.draw_line(y=actor_loss.item(), interval=10, name="actor_loss")
-        viz.step()
+        # viz.draw_line(y=critic_loss.item(), interval=10, name="critic_loss")
+        # viz.draw_line(y=actor_loss.item(), interval=10, name="actor_loss")
+        # viz.step()
         return critic_loss, actor_loss
 
 
@@ -254,27 +255,26 @@ class TrainerMetadata(TorchSerializable):
     def load_state_dict_impl(self, var_state):
         self.current_epoch = var_state['current_epoch']
         self.scores.extend(var_state['scores'])
-        # self.best_score = var_state['best_score']  # TODO: 이거 없는 버전..
-        self.best_score = max(self.scores)
+        self.best_score = var_state['best_score']
         self.last_critic_losses.extend(var_state['last_critic_losses'])
         self.last_actor_losses.extend(var_state['last_actor_losses'])
         agent.load_state_dict(var_state['agent'])
 
     def save(self, checkpoint):
-        # TODO: 매번 var_state 구성하는거 속도 차이 측정
-        var_state = self.state_dict()
-        is_best = False
-        if max(self.scores) > self.best_score:
-            self.best_score = max(self.scores)
-            is_best = True
-        file_name = __file__
-        checkpoint.save_checkpoint(var_state, is_best, file_name)
+        # state_dict 구성 속도가 느리므로 필요할 때만 구성
+        if checkpoint.is_saving_episode(self.current_epoch):
+            var_state = self.state_dict()
+            is_best = False
+            if max(self.scores) > self.best_score:
+                self.best_score = max(self.scores)
+                is_best = True
+
+            checkpoint.save_checkpoint(__file__, var_state, is_best)
 
     def load(self, checkpoint, viz):
-        file_name = __file__
-        # file_name = checkpoint.get_best_model_file_name(file_name)
-        print("Loading checkpoint '{}'".format(file_name))
-        var_state = checkpoint.load_model(file_name=file_name)
+        full_path = checkpoint.get_best_model_file_name(__file__)
+        print("Loading checkpoint '{}'".format(full_path))
+        var_state = checkpoint.load_model(full_path=full_path)
         self.load_state_dict(var_state)
         for e in range(0, len(self.scores)):
             viz.draw_line(x=e, y=self.scores[e], name='score')
@@ -299,16 +299,20 @@ class TrainerMetadata(TorchSerializable):
 
 
 if __name__ == "__main__":
+    VERSION = 2
+    # TODO: 시드 넣기
+    # env.seed(args.seed)
+    # torch.manual_seed(args.seed)
     RENDER = True
     LOG_INTERVAL = 1
-    IS_LOAD, IS_SAVE, SAVE_INTERVAL = True, True, 1
+    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 400
     EPISODES = 30000
 
     device = u.get_device(force_cpu=False)
     viz = Drawer(reset=True, env='main')
 
     metadata = TrainerMetadata()
-    checkpoint_inst = Checkpoint(IS_SAVE, SAVE_INTERVAL)
+    checkpoint_inst = Checkpoint(VERSION, IS_SAVE, SAVE_INTERVAL)
 
     """
     상태 공간 8개, 범위 -∞ < s < ∞
@@ -351,3 +355,7 @@ if __name__ == "__main__":
 
         if IS_SAVE:
             metadata.save(checkpoint_inst)
+
+        if score > env.spec.reward_threshold:
+            print("Solved! Running reward is now {}".format(score))
+            break
