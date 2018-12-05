@@ -28,6 +28,7 @@ class TorchSerializable(object):
 
 class Checkpoint:
 
+    # TODO: 폴더 없을 때 만들어 주기
     def __init__(self, version, is_save=True, save_interval=10):
         self.version = version
         self.is_save = is_save

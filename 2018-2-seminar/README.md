@@ -6,3 +6,5 @@
 * Python 3.6
 * Pytorch 0.4.1
 * Numpy 1.15.3
+* Mujoco 1.5
+* gym (OpenAI Gym)

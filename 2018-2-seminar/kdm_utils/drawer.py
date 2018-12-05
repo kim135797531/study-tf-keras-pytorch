@@ -20,7 +20,7 @@ class Drawer:
         self.default_step += 1
 
     def draw_line(self, y, x=None, interval=None, env=None, name=None):
-        x = x if x else self.default_step
+        x = x if x or x == 0 else self.default_step
         interval = interval if interval else self.default_interval
         env = env if env else self.default_env
         name = name if name else self.default_name
