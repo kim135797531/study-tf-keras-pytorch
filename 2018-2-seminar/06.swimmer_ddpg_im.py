@@ -233,7 +233,6 @@ class DDPG(TorchSerializable):
         #                   조건: 상태
         #                   식:   정책망(상태) (정책망 가중치=θµ) 일 때, 정책망 가중치로 그라디언트 구하기
         #     식:   평가망(상태, 액션) (평가망 가중치=θ) 일 때, 액션으로 그라디언트 구하기
-
         self.actor_optimizer.zero_grad()
 
         # µ(s|θµ)
@@ -284,25 +283,35 @@ class IntrinsicMotivation(TorchSerializable):
 
         # TODO: 적절한 C는 내가 찾아야 함
         self.intrinsic_scale_1 = 1
+        # TODO: 원 논문에는 없는, C의 지수적 감소식 구현
+        # -> 처음에는 내발적 동기 값을 크게 하다가 나중에는 0으로 하기
+        # -> 반영 비율 자체는 1:1로 유지한다
+        self.intrinsic_scale_1_annealing = True
+        self.intrinsic_scale_1_decay = 0.99
+        self.intrinsic_scale_1_min = 0.001
 
         # Expert망 Adam 학습률
         self.learning_rate_expert = 0.001
 
-        # TODO: 가중치 조절
+        # TODO: 가중치 조절,
+        # TODO: 근데 어차피 내발적 동기에 파라미터 C를 곱해줄 거면 굳이 가중합을 해 줄 필요가 있나?
         # 0 = 내적 동기 0% (순수 외적 동기)
         # 0.5 = 내적/외적 반반 (균등 분배)
         # 1 = 내적 동기 100% (순수 내적 동기)
-        self.intrinsic_reward_ratio = 0.2
+        self.intrinsic_reward_ratio = 0.5
 
     def state_dict_impl(self):
         return {
-            'state_predictor': self.expert.state_dict(),
-            'state_predictor_optimizer': self.expert_optimizer.state_dict(),
+            'expert': self.expert.state_dict(),
+            'expert_optimizer': self.expert_optimizer.state_dict(),
+            'intrinsic_scale_1': self.intrinsic_scale_1
         }
 
     def load_state_dict_impl(self, var_state):
         self.expert.load_state_dict(var_state['expert'])
         self.expert_optimizer.load_state_dict(var_state['expert_optimizer'])
+        # noinspection PyAttributeOutsideInit
+        self.intrinsic_scale_1 = var_state['intrinsic_scale_1']
 
     def _train_model(self, state_batch, action_batch, next_state_batch):
         predicted_state_batch = self.expert(state_batch, action_batch)
@@ -336,9 +345,15 @@ class IntrinsicMotivation(TorchSerializable):
 
         return intrinsic_reward_batch
 
-    def get_reward(self, name, i_episode, state_batch, action_batch, next_state_batch):
+    def get_reward(self, name, i_episode, step, state_batch, action_batch, next_state_batch):
         if self.intrinsic_reward_ratio == 0:
             return torch.zeros_like(state_batch).to(device)
+
+        # TODO: 매 에피소드별로 vs 매 스텝별로 decay
+        if self.intrinsic_scale_1_annealing and step == 0:
+            if self.intrinsic_scale_1 > self.intrinsic_scale_1_min:
+                self.intrinsic_scale_1 *= self.intrinsic_scale_1_decay
+                viz.draw_line(x=i_episode, y=self.intrinsic_scale_1, name='intrinsic_scale_1')
 
         if name == 'novelty_motivation':
             return self._novelty_motivation(i_episode, state_batch, action_batch, next_state_batch)
@@ -408,7 +423,7 @@ class RLAgent(TorchSerializable):
             u.t_uint8(done)
         )
 
-    def train_model(self, i_episode):
+    def train_model(self, i_episode, step):
         # 메모리에서 일정 크기만큼 기억을 불러온다
         # 그 후 기억을 모아 각 변수별로 모은다. (즉, 전치행렬)
         # TODO: random과 zip func 글카에서 하기
@@ -424,7 +439,7 @@ class RLAgent(TorchSerializable):
         ext_r = torch.cat(sars_batch.reward).to(device)
         next_s = torch.cat(sars_batch.next_state).to(device)
 
-        int_r = self.im.get_reward('novelty_motivation', i_episode, s, a, next_s)
+        int_r = self.im.get_reward('novelty_motivation', i_episode, step, s, a, next_s)
         ext_r = self.im.weighted_reward_batch(int_r, ext_r)
 
         critic_loss, actor_loss = self.ddpg.train_model(s, a, ext_r, next_s)
@@ -518,17 +533,18 @@ class TrainerMetadata(TorchSerializable):
 
 
 if __name__ == "__main__":
-    VERSION = 2
+    VERSION = 3
     # TODO: 시드 넣기
     # env.seed(args.seed)
     # torch.manual_seed(args.seed)
     RENDER = True
     LOG_INTERVAL = 1
-    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 400
+    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 405
     EPISODES = 30000
 
     device = u.set_device(force_cpu=False)
-    viz_env_name = os.path.basename(os.path.realpath(__file__) + '_0_without_im')
+    # viz_env_name = os.path.basename(os.path.realpath(__file__) + '_0_without_im')
+    viz_env_name = os.path.basename('5_im_NM_0.5_decay')
     viz = Drawer(reset=True, env=viz_env_name)
 
     metadata = TrainerMetadata()
@@ -548,7 +564,7 @@ if __name__ == "__main__":
         metadata.load(checkpoint_inst)
 
     # 최대 에피소드 수만큼 돌린다
-    for episode in range(metadata.current_epoch, EPISODES):
+    for i_episode in range(metadata.current_epoch, EPISODES):
         start_time = time.time()
         agent.ddpg.noise.reset()
         state = env.reset()
@@ -566,7 +582,7 @@ if __name__ == "__main__":
             agent.append_sample(state, action, reward, next_state, done)
 
             if len(agent.memory) >= agent.train_start:
-                last_critic_loss, last_actor_loss, last_int_r, last_ext_r = agent.train_model(episode)
+                last_critic_loss, last_actor_loss, last_int_r, last_ext_r = agent.train_model(i_episode, t)
 
             score += reward
             state = next_state
@@ -580,7 +596,7 @@ if __name__ == "__main__":
         metadata.last_critic_losses.append(last_critic_loss.item())
         metadata.last_int_r_list.append(last_int_r.item())
         metadata.last_ext_r_list.append(last_ext_r.item())
-        metadata.finish_episode(episode)
+        metadata.finish_episode(i_episode)
 
         if IS_SAVE:
             metadata.save(checkpoint_inst)
