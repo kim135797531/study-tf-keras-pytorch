@@ -19,10 +19,10 @@ import torch.optim as optim
 
 import gym
 
-import kdm_utils as u
-from kdm_utils.checkpoint import Checkpoint, TorchSerializable
-from kdm_utils.drawer import Drawer
-from kdm_utils.replay_memory import ReplayMemory
+import utils_kdm as u
+from utils_kdm.checkpoint import Checkpoint, TorchSerializable
+from utils_kdm.drawer import Drawer
+from utils_kdm.replay_memory import ReplayMemory
 
 
 # Python Pickle은 nested namedtuple save를 지원하지 않음

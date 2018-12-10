@@ -20,9 +20,9 @@ from torch.distributions import Categorical
 
 import gym
 
-import kdm_utils as u
-from kdm_utils.checkpoint import Checkpoint, TorchSerializable
-from kdm_utils.drawer import Drawer
+import utils_kdm as u
+from utils_kdm.checkpoint import Checkpoint, TorchSerializable
+from utils_kdm.drawer import Drawer
 
 
 # Python Pickle은 nested namedtuple save를 지원하지 않음

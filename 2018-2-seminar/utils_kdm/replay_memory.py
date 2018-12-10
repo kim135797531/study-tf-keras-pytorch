@@ -3,7 +3,7 @@
 import random
 from collections import namedtuple
 
-from kdm_utils.checkpoint import TorchSerializable
+from utils_kdm.checkpoint import TorchSerializable
 
 
 class ReplayMemory(TorchSerializable):

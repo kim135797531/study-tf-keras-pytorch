@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from kdm_utils.checkpoint import TorchSerializable
+from utils_kdm.checkpoint import TorchSerializable
 
 
 # Ornstein–Uhlenbeck process (오른스타인-우렌벡 과정) [1930]
