@@ -16,6 +16,7 @@ import torch.optim as optim
 import gym
 
 import utils_kdm as u
+from im.im_nm import NoveltyMotivation
 from utils_kdm.checkpoint import Checkpoint, TorchSerializable
 from utils_kdm.drawer import Drawer
 from utils_kdm.noise import OrnsteinUhlenbeckNoise
@@ -73,31 +74,6 @@ class Critic(nn.Module):
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
         # TODO: torch.clamp (v -mean) 으로 정규화 필요
-        return self.head(x)
-
-
-class StatePredictor(nn.Module):
-
-    def __init__(self, state_size, action_size):
-        super(StatePredictor, self).__init__()
-        # TODO: 상태 예측은 망 별로 안 커도 학습될 듯? (상태 예측만 테스트 해 보기)
-        # 내발적 동기를 위해서 상태를 예측한다는 개념 = 2007년 Oudeyer 논문을 참조한 것
-        sensorimotor_size = state_size + action_size
-        self.layer_sizes = [sensorimotor_size, 32, 16, state_size]
-
-        self.linear1 = nn.Linear(self.layer_sizes[0], self.layer_sizes[1])
-        self.linear2 = nn.Linear(self.layer_sizes[1], self.layer_sizes[2])
-        self.head = nn.Linear(self.layer_sizes[2], self.layer_sizes[3])
-        u.fanin_init(self.linear1.weight)
-        u.fanin_init(self.linear2.weight)
-        nn.init.uniform_(self.head.weight, a=-3*10e-4, b=3*10e-4)
-
-    def forward(self, state, action):
-        # 그냥 일렬로 합쳐기
-        # Oudeyer (2007)
-        x = torch.cat((state, action), dim=1).to(device)
-        x = F.relu(self.linear1(x))
-        x = F.relu(self.linear2(x))
         return self.head(x)
 
 
@@ -261,117 +237,6 @@ class DDPG(TorchSerializable):
         return critic_loss, actor_loss
 
 
-class IntrinsicMotivation(TorchSerializable):
-
-    def __init__(self, state_size, action_size):
-        self._set_hyper_parameters()
-
-        self.state_size, self.action_size = state_size, action_size
-
-        # Expert Network: (s, a') => (s+1')
-        self.expert = StatePredictor(self.state_size, self.action_size).to(device)
-
-        self.expert_optimizer = optim.Adam(
-            self.expert.parameters(),
-            lr=self.learning_rate_expert
-        )
-
-    def _set_hyper_parameters(self):
-        # TODO: 지연된 시작?
-        self.delayed_start = False
-        self.intrinsic_reward_start = 3000
-
-        # TODO: 적절한 C는 내가 찾아야 함
-        self.intrinsic_scale_1 = 1
-        # TODO: 원 논문에는 없는, C의 지수적 감소식 구현
-        # -> 처음에는 내발적 동기 값을 크게 하다가 나중에는 0으로 하기
-        # -> 반영 비율 자체는 1:1로 유지한다
-        self.intrinsic_scale_1_annealing = True
-        self.intrinsic_scale_1_decay = 0.99
-        self.intrinsic_scale_1_min = 0.001
-
-        # Expert망 Adam 학습률
-        self.learning_rate_expert = 0.001
-
-        # TODO: 가중치 조절,
-        # TODO: 근데 어차피 내발적 동기에 파라미터 C를 곱해줄 거면 굳이 가중합을 해 줄 필요가 있나?
-        # 0 = 내적 동기 0% (순수 외적 동기)
-        # 0.5 = 내적/외적 반반 (균등 분배)
-        # 1 = 내적 동기 100% (순수 내적 동기)
-        self.intrinsic_reward_ratio = 0.5
-
-    def state_dict_impl(self):
-        return {
-            'expert': self.expert.state_dict(),
-            'expert_optimizer': self.expert_optimizer.state_dict(),
-            'intrinsic_scale_1': self.intrinsic_scale_1
-        }
-
-    def load_state_dict_impl(self, var_state):
-        self.expert.load_state_dict(var_state['expert'])
-        self.expert_optimizer.load_state_dict(var_state['expert_optimizer'])
-        # noinspection PyAttributeOutsideInit
-        self.intrinsic_scale_1 = var_state['intrinsic_scale_1']
-
-    def _train_model(self, state_batch, action_batch, next_state_batch):
-        predicted_state_batch = self.expert(state_batch, action_batch)
-
-        # TODO: 상태 예측기도 DDPG 처럼 타겟망까지 만들어서 예측? 아니면 단순한 순차 선형 신경망?
-        state_prediction_error = nn.L1Loss(reduction='none').to(device)
-        state_prediction_error = state_prediction_error(predicted_state_batch.detach(), next_state_batch.detach())
-        state_prediction_error = torch.sum(state_prediction_error, dim=1).to(device)
-
-        # 상태 예측기 최적화
-        self.expert_optimizer.zero_grad()
-        state_predictor_loss = nn.MSELoss().to(device)  # 배치니까 mean 해줘야 할 듯?
-        state_predictor_loss = state_predictor_loss(predicted_state_batch, next_state_batch)
-        state_predictor_loss.backward()
-        self.expert_optimizer.step()
-
-        return state_prediction_error
-
-    def _novelty_motivation(self, i_episode, state_batch, action_batch, next_state_batch):
-        # Predictive novelty motivation (NM)
-        state_prediction_error = self._train_model(state_batch, action_batch, next_state_batch)
-        intrinsic_reward_batch = self.intrinsic_scale_1 * state_prediction_error
-
-        # TODO: 환경 평소 보상 (1) 정도로 clip 해줄까?
-        # intrinsic_reward_batch = torch.clamp(intrinsic_reward_batch, min=-2, max=2)
-        viz.draw_line(y=torch.mean(intrinsic_reward_batch), interval=1000, name="intrinsic_reward_batch")
-
-        # TODO: 제일 처음 Expert망이 조금 학습된 다음에 내발적 동기 보상 리턴하기?
-        if self.delayed_start and (viz.default_step < i_episode + self.intrinsic_reward_start):
-            return 0
-
-        return intrinsic_reward_batch
-
-    def get_reward(self, name, i_episode, step, state_batch, action_batch, next_state_batch):
-        if self.intrinsic_reward_ratio == 0:
-            return torch.zeros_like(state_batch).to(device)
-
-        # TODO: 매 에피소드별로 vs 매 스텝별로 decay
-        if self.intrinsic_scale_1_annealing and step == 0:
-            if self.intrinsic_scale_1 > self.intrinsic_scale_1_min:
-                self.intrinsic_scale_1 *= self.intrinsic_scale_1_decay
-                viz.draw_line(x=i_episode, y=self.intrinsic_scale_1, name='intrinsic_scale_1')
-
-        if name == 'novelty_motivation':
-            return self._novelty_motivation(i_episode, state_batch, action_batch, next_state_batch)
-        else:
-            return torch.zeros_like(state_batch).to(device)
-
-    def weighted_reward_batch(self, intrinsic, extrinsic):
-        # Oudeyer는 내적 동기랑 환경으로부터의 보상이랑 합칠 때 가중합을 제안
-        # 파라미터(비율)는 미제시
-        if self.intrinsic_reward_ratio == 0:
-            return extrinsic
-        elif self.intrinsic_reward_ratio == 1:
-            return intrinsic
-        else:
-            return self.intrinsic_reward_ratio * intrinsic + \
-                   (1 - self.intrinsic_reward_ratio) * extrinsic
-
-
 class RLAgent(TorchSerializable):
 
     def __init__(self, state_size, action_size, action_range=(-1, 1)):
@@ -385,7 +250,7 @@ class RLAgent(TorchSerializable):
         self.action_low, self.action_high = action_range
 
         self.ddpg = DDPG(self.state_size, self.action_size, action_range)
-        self.im = IntrinsicMotivation(self.state_size, self.action_size)
+        self.im = NoveltyMotivation(self.state_size, self.action_size, device, viz)
 
         # TODO: 리플레이 메모리를 DDPG 알고리즘에서 분리해서 저장하는 게 아름다운가?
         # 리플레이 메모리
@@ -439,7 +304,7 @@ class RLAgent(TorchSerializable):
         ext_r = torch.cat(sars_batch.reward).to(device)
         next_s = torch.cat(sars_batch.next_state).to(device)
 
-        int_r = self.im.get_reward('novelty_motivation', i_episode, step, s, a, next_s)
+        int_r = self.im.get_reward(i_episode, step, s, a, next_s)
         ext_r = self.im.weighted_reward_batch(int_r, ext_r)
 
         critic_loss, actor_loss = self.ddpg.train_model(s, a, ext_r, next_s)
@@ -533,7 +398,7 @@ class TrainerMetadata(TorchSerializable):
 
 
 if __name__ == "__main__":
-    VERSION = 3
+    VERSION = 4
     # TODO: 시드 넣기
     # env.seed(args.seed)
     # torch.manual_seed(args.seed)
