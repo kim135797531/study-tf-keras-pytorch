@@ -63,15 +63,15 @@ class IntrinsicMotivation(TorchSerializable):
                    (1 - self.intrinsic_reward_ratio) * extrinsic
 
     @abstractmethod
-    def intrinsic_motivation_impl(self, i_episode, step, state_batch, action_batch, next_state_batch):
+    def intrinsic_motivation_impl(self, i_episode, step, transitions, state_batch, action_batch, next_state_batch):
         raise NotImplementedError("Please implement this method.")
 
-    def intrinsic_motivation(self, i_episode, step, state_batch, action_batch, next_state_batch):
-        intrinsic_reward_batch = self.intrinsic_motivation_impl(i_episode, step, state_batch, action_batch, next_state_batch)
+    def intrinsic_motivation(self, i_episode, step, transitions, state_batch, action_batch, next_state_batch):
+        intrinsic_reward_batch = self.intrinsic_motivation_impl(i_episode, step, transitions, state_batch, action_batch, next_state_batch)
         return intrinsic_reward_batch
 
-    def get_reward(self, i_episode, step, state_batch, action_batch, next_state_batch):
+    def get_reward(self, i_episode, step, transitions, state_batch, action_batch, next_state_batch):
         if self.intrinsic_reward_ratio == 0:
             return torch.zeros_like(state_batch).to(self.device)
 
-        return self.intrinsic_motivation(i_episode, step, state_batch, action_batch, next_state_batch)
+        return self.intrinsic_motivation(i_episode, step, transitions, state_batch, action_batch, next_state_batch)

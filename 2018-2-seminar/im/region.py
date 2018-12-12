@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from collections import namedtuple
 from copy import deepcopy
-from queue import Queue
+from collections import deque
 
 import numpy as np
 import torch
@@ -13,6 +13,9 @@ import torch.optim as optim
 import utils_kdm as u
 from utils_ext import k_means
 from utils_kdm.checkpoint import TorchSerializable
+
+# TODO: 장치 처리 좀 제발
+device = u.set_device(force_cpu=False)
 from utils_kdm import global_device
 
 
@@ -33,10 +36,9 @@ class Expert(nn.Module):
         nn.init.uniform_(self.head.weight, a=-3*10e-4, b=3*10e-4)
 
     def forward(self, state, action):
-        device = global_device
         # 그냥 일렬로 합쳐기
         # Oudeyer (2007)
-        x = torch.cat((state, action), dim=1).to(device)
+        x = torch.cat((state, action), dim=1)
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
         return self.head(x)
@@ -64,7 +66,7 @@ class Region(TorchSerializable):
             self.expert.parameters(),
             lr=self.learning_rate_expert
         )
-        self.loss_queue = Queue(maxsize=self.past_time + self.time_window)
+        self.loss_queue = deque(maxlen=self.past_time + self.time_window)
 
         self.exemplar_structure = namedtuple('Exemplar', ('state', 'action', 'next_state'))
 
@@ -122,9 +124,9 @@ class Region(TorchSerializable):
 
     def _train_model(self):
         samples = self.exemplar_structure(*zip(*self.samples))
-        s = torch.stack(samples.state).to(self.device)
-        a = torch.stack(samples.action).to(self.device)
-        next_s = torch.stack(samples.next_state).to(self.device)
+        s = torch.cat(samples.state).to(self.device)
+        a = torch.cat(samples.action).to(self.device)
+        next_s = torch.cat(samples.next_state).to(self.device)
 
         predicted_next_s = self.expert(s, a)
 
@@ -140,7 +142,7 @@ class Region(TorchSerializable):
         state_predictor_loss.backward()
         self.expert_optimizer.step()
 
-        self.loss_queue.put(state_predictor_loss.item())
+        self.loss_queue.append(state_predictor_loss.item())
 
     def add(self, sample):
         self.samples.append(sample)
@@ -189,7 +191,9 @@ class RegionManager(TorchSerializable):
         for dim in range(n_dim):
             # FIXME: 여기 100% 동작 안 할 듯
             # TODO: 여러 dim에 대해 동시에 돌리기
-            weighted_var, index = self.find_minimum_variance(region, dim)
+            # weighted_var, index = self.find_minimum_variance(region, dim)
+            weighted_var = 0
+            index = 5
             if min_weighted_var is None or min_weighted_var > weighted_var:
                 min_weighted_var = weighted_var
                 min_index = index
@@ -197,7 +201,7 @@ class RegionManager(TorchSerializable):
 
         first_dim, second_dim = region.global_dim_to_local_dim(min_cutting_dim)
         # TODO: 나중에 find_minimum_variance에서 Region 만들어서 넘겨주면 삭제
-        region.samples.sort(key=lambda elem: elem[first_dim][second_dim])
+        region.samples.sort(key=lambda elem: elem[first_dim][0][second_dim])
         min_left_child = Region(region.state_size, region.action_size)
         min_left_child.samples = region.samples[:min_index]
         min_left_child._train_model()
@@ -205,14 +209,15 @@ class RegionManager(TorchSerializable):
         min_right_child.samples = region.samples[min_index:]
         min_right_child._train_model()
 
-        min_cutting_val = min_left_child.samples[-1][first_dim][second_dim]
+        min_cutting_val = min_left_child.samples[-1][first_dim][0][second_dim]
 
         region.set_as_non_leaf(min_cutting_dim, min_cutting_val, min_left_child, min_right_child)
 
     def find_minimum_variance(self, region, dim):
         first_dim, second_dim = region.global_dim_to_local_dim(dim)
         # TODO: 이 구문 때문에 반드시 tuple이 state, action, next_state 순으로 저장되어 있어야 함
-        region.samples.sort(key=lambda elem: elem[first_dim][second_dim])
+        # TODO: 중간 dimension 하드코딩.. [first_dim]!!![0]!!![second_dim]
+        region.samples.sort(key=lambda elem: elem[first_dim][0][second_dim])
 
         samples = self.exemplar_structure(*zip(*region.samples))
         next_s = samples.next_state
@@ -240,7 +245,7 @@ class RegionManager(TorchSerializable):
             return region
 
         first_dim, second_dim = region.global_dim_to_local_dim(region.cutting_dim)
-        if region.cutting_val < sample[first_dim][second_dim]:
+        if region.cutting_val < sample[first_dim][0][second_dim]:
             return self.find_region(sample, region.left_child)
         else:
             return self.find_region(sample, region.right_child)

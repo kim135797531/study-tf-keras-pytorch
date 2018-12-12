@@ -17,6 +17,8 @@ import gym
 
 import utils_kdm as u
 from im.im_nm import NoveltyMotivation
+from im.im_lpm import LearningProgressMotivation
+from im.im_sm import PredictiveSurpriseMotivation
 from utils_kdm.checkpoint import Checkpoint, TorchSerializable
 from utils_kdm.drawer import Drawer
 from utils_kdm.noise import OrnsteinUhlenbeckNoise
@@ -250,7 +252,7 @@ class RLAgent(TorchSerializable):
         self.action_low, self.action_high = action_range
 
         self.ddpg = DDPG(self.state_size, self.action_size, action_range)
-        self.im = NoveltyMotivation(self.state_size, self.action_size, device, viz)
+        self.im = PredictiveSurpriseMotivation(self.state_size, self.action_size, device, viz)
 
         # TODO: 리플레이 메모리를 DDPG 알고리즘에서 분리해서 저장하는 게 아름다운가?
         # 리플레이 메모리
@@ -304,7 +306,8 @@ class RLAgent(TorchSerializable):
         ext_r = torch.cat(sars_batch.reward).to(device)
         next_s = torch.cat(sars_batch.next_state).to(device)
 
-        int_r = self.im.get_reward(i_episode, step, s, a, next_s)
+        # int_r = self.im.get_reward(i_episode, step, s, a, next_s)
+        int_r = self.im.get_reward(i_episode, step, transitions, s, a, next_s)
         ext_r = self.im.weighted_reward_batch(int_r, ext_r)
 
         critic_loss, actor_loss = self.ddpg.train_model(s, a, ext_r, next_s)
@@ -404,12 +407,12 @@ if __name__ == "__main__":
     # torch.manual_seed(args.seed)
     RENDER = True
     LOG_INTERVAL = 1
-    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 405
+    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 404
     EPISODES = 30000
 
     device = u.set_device(force_cpu=False)
     # viz_env_name = os.path.basename(os.path.realpath(__file__) + '_0_without_im')
-    viz_env_name = os.path.basename('5_im_NM_0.5_decay')
+    viz_env_name = os.path.basename('13_im_SM_0.5_decay_0.999_min_0.01')
     viz = Drawer(reset=True, env=viz_env_name)
 
     metadata = TrainerMetadata()
