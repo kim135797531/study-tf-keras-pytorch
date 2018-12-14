@@ -6,8 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import utils_kdm as u
-from im.im_base import IntrinsicMotivation
-from im.region import RegionManager
+from algorithm_im.im_base import IntrinsicMotivation
+from algorithm_im.region import RegionManager
 
 
 class StatePredictor(nn.Module):

@@ -6,9 +6,7 @@
 # https://github.com/pytorch/examples/blob/master/reinforcement_learning/actor_critic.py
 #
 
-import os
 import sys
-import time
 from collections import namedtuple
 
 import gym
@@ -21,9 +19,10 @@ from torch.distributions import Categorical
 import utils_kdm as u
 from utils_kdm.checkpoint import Checkpoint
 from utils_kdm.drawer import Drawer
-
 # Python Pickle은 nested namedtuple save를 지원하지 않음
 # https://stackoverflow.com/questions/4677012/python-cant-pickle-type-x-attribute-lookup-failed
+from utils_kdm.trainer_metadata import TrainerMetadata
+
 SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
 
 
@@ -31,6 +30,7 @@ class A2CAgent(u.TorchSerializable):
 
     def __init__(self, state_size, action_size):
         self._set_hyper_parameters()
+        self.device = TrainerMetadata().device
 
         self.state_size = state_size
         self.action_size = action_size
@@ -71,7 +71,7 @@ class A2CAgent(u.TorchSerializable):
             nn.Linear(24, self.action_size),
             nn.Softmax(dim=-1)  # 가장 오른쪽 차원
         )
-        actor.apply(self._init_weights).to(device)
+        actor.apply(self._init_weights).to(self.device)
         return actor
 
     def build_critic(self):
@@ -82,7 +82,7 @@ class A2CAgent(u.TorchSerializable):
             nn.ReLU(),
             nn.Linear(24, self.value_size)
         )
-        critic.apply(self._init_weights).to(device)
+        critic.apply(self._init_weights).to(self.device)
         return critic
 
     def get_action(self, state):
@@ -126,128 +126,89 @@ class A2CAgent(u.TorchSerializable):
         return actor_loss, critic_loss
 
 
-class TrainerMetadata(u.TorchSerializable):
-
-    def __init__(self):
-        self.current_epoch = 0
-
-        self.scores = list()
-        self.best_score = 0
-
-        self.last_critic_losses = list()
-        self.last_actor_losses = list()
-
-    def state_dict_impl(self):
-        return {
-            'current_epoch': self.current_epoch + 1,
-            'scores': self.scores,
-            'best_score': self.best_score,
-            'last_critic_losses': self.last_critic_losses,
-            'last_actor_losses': self.last_actor_losses,
-            'agent': agent.state_dict()
-        }
-
-    def load_state_dict_impl(self, var_state):
-        self.current_epoch = var_state['current_epoch']
-        self.scores.extend(var_state['scores'])
-        self.best_score = var_state['best_score']
-        self.last_critic_losses.extend(var_state['last_critic_losses'])
-        self.last_actor_losses.extend(var_state['last_actor_losses'])
-        agent.load_state_dict(var_state['agent'])
-
-    def save(self, checkpoint):
-        # state_dict 구성 속도가 느리므로 필요할 때만 구성
-        if checkpoint.is_saving_episode(self.current_epoch):
-            var_state = self.state_dict()
-            is_best = False
-            if max(self.scores) > self.best_score:
-                self.best_score = max(self.scores)
-                is_best = True
-
-            checkpoint.save_checkpoint(__file__, var_state, is_best)
-
-    def load(self, checkpoint, viz):
-        full_path = checkpoint.get_best_model_file_name(__file__)
-        print("Loading checkpoint '{}'".format(full_path))
-        var_state = checkpoint.load_model(full_path=full_path)
-        self.load_state_dict(var_state)
-        for e in range(0, len(self.scores)):
-            viz.draw_line(x=e, y=self.scores[e], name='score')
-            viz.draw_line(x=e, y=self.last_actor_losses[e].item(), name='last_actor_loss')
-            viz.draw_line(x=e, y=self.last_critic_losses[e].item(), name='last_critic_loss')
-        print("Loading complete. Resuming from episode: {}, score: {:.2f}".format(self.current_epoch - 1, max(self.scores, default=0)))
-
-    def finish_episode(self, viz, episode, score, last_actor_loss, last_critic_loss):
-        score = score.item()
-        score = score if score == 500.0 else score + 100
-        self.current_epoch = episode
-        self.scores.append(score)
-        self.last_actor_losses.append(last_actor_loss)
-        self.last_critic_losses.append(last_critic_loss)
-
-        if episode % LOG_INTERVAL == 0:
-            print('Episode {}\tScore: {:.2f}\tCompute Time: {:.2f}'.format(
-                episode, score, time.time() - start_time))
-
-            viz.draw_line(y=score, x=episode, name='score')
-            viz.draw_line(y=last_actor_loss.item(), x=episode, name='last_actor_loss')
-            viz.draw_line(y=last_critic_loss.item(), x=episode, name='last_critic_loss')
-
-
 if __name__ == "__main__":
+    #####################
+    # 환경 설정
+    #####################
+
+    # 0. 일반 설정
+    FORCE_CPU = False
+    TrainerMetadata().set_device(force_cpu=FORCE_CPU)
+
+    # 1. 시각화 관련 설정
+    VISDOM_RESET = True
+    # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
+    VIZ_ENV_NAME = '01.cartpole_a2c_simple'
+
+    # 2. 저장 관련 설정
     VERSION = 1
-    RENDER = True
+    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 400
+    SAVE_FULL_PATH = __file__
+
+    # 3. 실험 환경 관련 설정
+    GYM_ENV = 'CartPole-v1'
+    RENDER = False
     LOG_INTERVAL = 1
-    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 100
     EPISODES = 10000
 
-    device = u.set_device(force_cpu=False)
-    viz_env_name = os.path.basename(os.path.realpath(__file__))
-    viz = Drawer(reset=True, env=viz_env_name)
+    #####################
+    # 객체 구성
+    #####################
+    viz = Drawer(reset=VISDOM_RESET, env=VIZ_ENV_NAME)
+    checkpoint = Checkpoint(VERSION, IS_SAVE, SAVE_INTERVAL)
 
-    metadata = TrainerMetadata()
-    checkpoint_inst = Checkpoint(VERSION, IS_SAVE, SAVE_INTERVAL)
-
-    """
-    상태 공간 4개, 범위 -∞ < s < ∞
-    행동 공간 1개, 이산값 0 or 1
-    """
-    env = gym.make('CartPole-v1')
+    # Agent 생성
+    env = gym.make(GYM_ENV)
     state_size = env.observation_space.shape[0]
     action_size = env.action_space.n
 
     agent = A2CAgent(state_size, action_size)
 
+    # 메타데이터 관리 클래스 설정
+    TrainerMetadata().reset(
+        viz=viz,
+        checkpoint=checkpoint,
+        agent=agent,
+        force_cpu=FORCE_CPU,
+        log_interval=LOG_INTERVAL,
+        save_full_path=SAVE_FULL_PATH
+    )
+
     if IS_LOAD:
-        metadata.load(checkpoint_inst, viz)
+        TrainerMetadata().load()
 
     # 최대 에피소드 수만큼 돌린다
-    for episode in range(metadata.current_epoch, EPISODES):
-        start_time = time.time()
+    for i_episode in range(TrainerMetadata().current_epoch, EPISODES):
+        TrainerMetadata().start_episode()
         state = env.reset()
-        score = last_actor_loss = last_critic_loss = u.t_float32(0)
+        score = u.t_float32(0)
 
         # 각 에피소드당 환경에 정의된 최대 스텝 수만큼 돌린다
         # 단 그 전에 환경에서 정의된 종료 상태(done)가 나오면 거기서 끝낸다
         for t in range(env.spec.max_episode_steps):
+            TrainerMetadata().start_step()
+
             action = agent.get_action(state)
             next_state, reward, done, _ = env.step(action)
-
             reward = reward if not done or score == 499 else -100
 
-            last_actor_loss, last_critic_loss = agent.train_model(state, action, reward, next_state, done)
+            agent.train_model(state, action, reward, next_state, done)
 
             score += reward
             state = next_state
 
             env.render() if RENDER else None
-            if done: break
+            TrainerMetadata().finish_step()
+            if done:
+                break
 
-        metadata.finish_episode(viz, episode, score, last_actor_loss, last_critic_loss)
+        TrainerMetadata().log(score + 100, 'score')
+        TrainerMetadata().finish_episode(i_episode)
 
         if IS_SAVE:
-            metadata.save(checkpoint_inst)
+            TrainerMetadata().save()
 
         # 이전 10개 에피소드의 점수 평균이 490보다 크면 학습 중단
-        if np.mean(metadata.scores[-min(10, len(metadata.scores)):]) > 490:
+        scores = TrainerMetadata().indicators['score']['default_var']
+        if np.mean(scores[-10:]) > 490:
             sys.exit()

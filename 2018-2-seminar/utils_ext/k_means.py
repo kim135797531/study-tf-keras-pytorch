@@ -79,7 +79,7 @@ def get_initial_state(X, n_clusters):
 
 
 def execute(X, n_clusters, device=None, tol=1e-4):
-    """lloyd algorithm
+    """lloyd algorithm_rl
 
         Args:
           X: n차원 Numpy 배열 (float 가정)

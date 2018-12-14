@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 import utils_kdm as u
-from im.im_base import IntrinsicMotivation
+from algorithm_im.im_base import IntrinsicMotivation
 from utils_kdm.trainer_metadata import TrainerMetadata
 
 
@@ -36,7 +36,30 @@ class StatePredictor(nn.Module):
         return self.head(x)
 
 
-class NoveltyMotivation(IntrinsicMotivation):
+class MetaPredictor(nn.Module):
+
+    def __init__(self, state_size, action_size):
+        super(MetaPredictor, self).__init__()
+        sensorimotor_size = state_size + action_size
+        self.layer_sizes = [sensorimotor_size, 32, 16, 1]
+
+        self.linear1 = nn.Linear(self.layer_sizes[0], self.layer_sizes[1])
+        self.linear2 = nn.Linear(self.layer_sizes[1], self.layer_sizes[2])
+        self.head = nn.Linear(self.layer_sizes[2], self.layer_sizes[3])
+        u.fanin_init(self.linear1.weight)
+        u.fanin_init(self.linear2.weight)
+        nn.init.uniform_(self.head.weight, a=-3*10e-4, b=3*10e-4)
+
+    def forward(self, state, action):
+        # 그냥 일렬로 합쳐기
+        # Oudeyer (2007)
+        x = torch.cat((state, action), dim=1)
+        x = F.relu(self.linear1(x))
+        x = F.relu(self.linear2(x))
+        return self.head(x)
+
+
+class PredictiveSurpriseMotivation(IntrinsicMotivation):
 
     def __init__(self, state_size, action_size):
         super().__init__(state_size, action_size)
@@ -44,10 +67,15 @@ class NoveltyMotivation(IntrinsicMotivation):
 
         # Expert Network: (s, a') => (s+1')
         self.expert = StatePredictor(self.state_size, self.action_size).to(self.device)
+        self.meta_predictor = MetaPredictor(self.state_size, self.action_size).to(self.device)
 
         self.expert_optimizer = optim.Adam(
             self.expert.parameters(),
             lr=self.learning_rate_expert
+        )
+        self.meta_predictor_optimizer = optim.Adam(
+            self.meta_predictor.parameters(),
+            lr=self.learning_rate_meta_predictor
         )
 
     def _set_hyper_parameters(self):
@@ -55,6 +83,8 @@ class NoveltyMotivation(IntrinsicMotivation):
 
         # Expert망 Adam 학습률
         self.learning_rate_expert = 0.001
+        # 메타망 Adam 학습률
+        self.learning_rate_meta_predictor = 0.001
 
         # TODO: 적절한 C는 내가 찾아야 함
         self.intrinsic_scale_1 = 1
@@ -62,9 +92,9 @@ class NoveltyMotivation(IntrinsicMotivation):
         # TODO: 원 논문에는 없는, C의 지수적 감소식 구현
         # -> 처음에는 내발적 동기 값을 크게 하다가 나중에는 0으로 하기
         # -> 반영 비율 자체는 1:1로 유지한다
-        self.intrinsic_scale_1_annealing = True
-        self.intrinsic_scale_1_decay = 0.99
-        self.intrinsic_scale_1_min = 0.001
+        self.intrinsic_scale_1_annealing = False
+        self.intrinsic_scale_1_decay = 0.999
+        self.intrinsic_scale_1_min = 0.01
 
     def state_dict_impl(self):
         todo = super().state_dict_impl()
@@ -85,6 +115,7 @@ class NoveltyMotivation(IntrinsicMotivation):
         self.intrinsic_scale_1 = var_state['intrinsic_scale_1']
 
     def _train_model(self, state_batch, action_batch, next_state_batch):
+        # 상태 예측기 #
         predicted_state_batch = self.expert(state_batch, action_batch)
 
         # TODO: 상태 예측기도 DDPG 처럼 타겟망까지 만들어서 예측? 아니면 단순한 순차 선형 신경망?
@@ -99,16 +130,29 @@ class NoveltyMotivation(IntrinsicMotivation):
         state_predictor_loss.backward()
         self.expert_optimizer.step()
 
-        return state_prediction_error
+        # 메타망 #
+        predicted_state_predictor_loss = self.meta_predictor(state_batch, action_batch)
+
+        meta_prediction_error = nn.L1Loss(reduction='none').to(self.device)
+        meta_prediction_error = meta_prediction_error(predicted_state_predictor_loss.squeeze().detach(), state_prediction_error.detach())
+        meta_prediction_error = torch.sum(meta_prediction_error).to(self.device)
+
+        # 메타 최적화
+        self.meta_predictor_optimizer.zero_grad()
+        meta_predictor_loss = nn.MSELoss().to(self.device)
+        meta_predictor_loss = meta_predictor_loss(predicted_state_predictor_loss.squeeze(), state_prediction_error)
+        meta_predictor_loss.backward()
+        self.meta_predictor_optimizer.step()
+
+        return state_prediction_error, meta_prediction_error
 
     def intrinsic_motivation_impl(self, i_episode, transitions, step, state_batch, action_batch, next_state_batch):
-        # Predictive novelty motivation (NM)
-        state_prediction_error = self._train_model(state_batch, action_batch, next_state_batch)
-        intrinsic_reward_batch = self.intrinsic_scale_1 * state_prediction_error
+        # Predictive Surprise Motivation (SM)
+        state_prediction_error, meta_prediction_error = self._train_model(state_batch, action_batch, next_state_batch)
+        intrinsic_reward_batch = self.intrinsic_scale_1 * (state_prediction_error / meta_prediction_error)
 
         # TODO: 환경 평소 보상 (1) 정도로 clip 해줄까?
         # intrinsic_reward_batch = torch.clamp(intrinsic_reward_batch, min=-2, max=2)
-        TrainerMetadata().log('intrinsic_reward_batch', torch.mean(intrinsic_reward_batch))
 
         # TODO: 제일 처음 Expert망이 조금 학습된 다음에 내발적 동기 보상 리턴하기?
         if self.delayed_start and (TrainerMetadata().global_step < i_episode + self.intrinsic_reward_start):
