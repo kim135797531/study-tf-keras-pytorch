@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
+from collections import deque
 from collections import namedtuple
 from copy import deepcopy
-from collections import deque
 
 import numpy as np
 import torch
@@ -11,12 +11,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 import utils_kdm as u
-from utils_ext import k_means
-from utils_kdm.checkpoint import TorchSerializable
-
-# TODO: 장치 처리 좀 제발
-device = u.set_device(force_cpu=False)
-from utils_kdm import global_device
+from utils_kdm.trainer_metadata import TrainerMetadata
 
 
 class Expert(nn.Module):
@@ -44,13 +39,13 @@ class Expert(nn.Module):
         return self.head(x)
 
 
-class Region(TorchSerializable):
+class Region(u.TorchSerializable):
 
     # TODO: 리전별로 객체화 하면 엄청 느릴 것 같은데..
     # TODO: Torch stack으로?
     def __init__(self, state_size, action_size):
         self._set_hyper_parameters()
-        self.device = global_device
+        self.device = TrainerMetadata().device
         self.state_size = state_size
         self.action_size = action_size
 
@@ -148,15 +143,15 @@ class Region(TorchSerializable):
         self.samples.append(sample)
 
         # TODO:
-        #if len(self.samples) > 1:
+        # if len(self.samples) > 1:
         self._train_model()
 
 
-class RegionManager(TorchSerializable):
+class RegionManager(u.TorchSerializable):
 
     def __init__(self, state_size, action_size):
         self._set_hyper_parameters()
-        self.device = global_device
+        self.device = TrainerMetadata().device
         self.region_head = Region(state_size, action_size)
         self.exemplar_structure = namedtuple('Exemplar', ('state', 'action', 'next_state'))
 
@@ -228,8 +223,9 @@ class RegionManager(TorchSerializable):
         for i in range(2, len(next_s) - 1):
             left_next_s, right_next_s = torch.stack(next_s[:i]), torch.stack(next_s[i:])
             # TODO: 분산 계산.. 맞는지 모르겠다
-            weighted_var = len(left_next_s) * left_next_s.var() + \
-                           len(right_next_s) * right_next_s.var()
+            weighted_var = \
+                len(left_next_s) * left_next_s.var() + \
+                len(right_next_s) * right_next_s.var()
 
             if min_weighted_var is None or min_weighted_var > weighted_var:
                 min_weighted_var = weighted_var
@@ -249,7 +245,6 @@ class RegionManager(TorchSerializable):
             return self.find_region(sample, region.left_child)
         else:
             return self.find_region(sample, region.right_child)
-
 
     """
     def em_algorithm(self, region, dim):

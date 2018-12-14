@@ -1,35 +1,22 @@
 # -*- coding: utf-8 -*-
 
-import os
 from abc import ABCMeta, abstractmethod
-import time
-from collections import namedtuple
 
-import numpy as np
 import torch
-import torch.nn as nn
+
+from utils_kdm import TorchSerializable
+from utils_kdm.trainer_metadata import TrainerMetadata
+
+
 # noinspection PyPep8Naming
-import torch.nn.functional as F
-import torch.optim as optim
-
-import gym
-
-import utils_kdm as u
-from utils_kdm.checkpoint import Checkpoint, TorchSerializable
-from utils_kdm.drawer import Drawer
-from utils_kdm.noise import OrnsteinUhlenbeckNoise
-from utils_kdm.replay_memory import ReplayMemory
-from utils_kdm import global_device
-from utils_kdm import drawer
 
 
 class IntrinsicMotivation(TorchSerializable):
     __metaclass__ = ABCMeta
 
-    def __init__(self, state_size, action_size, device, viz=None):
+    def __init__(self, state_size, action_size):
         self._set_hyper_parameters()
-        self.device = device
-        self.viz = viz
+        self.device = TrainerMetadata().device
 
         self.state_size, self.action_size = state_size, action_size
 

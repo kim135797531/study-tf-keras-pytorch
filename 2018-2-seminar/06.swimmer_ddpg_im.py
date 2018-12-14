@@ -2,10 +2,9 @@
 # Swimmer-v2 with DDPG
 # Intrinsic Motivation based on Oudeyer et al. (2007)
 
-import os
-import time
 from collections import namedtuple
 
+import gym
 import numpy as np
 import torch
 import torch.nn as nn
@@ -13,20 +12,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-import gym
-
 import utils_kdm as u
-from im.im_nm import NoveltyMotivation
-from im.im_lpm import LearningProgressMotivation
 from im.im_sm import PredictiveSurpriseMotivation
-from utils_kdm.checkpoint import Checkpoint, TorchSerializable
+from utils_kdm.checkpoint import Checkpoint
 from utils_kdm.drawer import Drawer
 from utils_kdm.noise import OrnsteinUhlenbeckNoise
 from utils_kdm.replay_memory import ReplayMemory
-
+from utils_kdm.trainer_metadata import TrainerMetadata
 
 # Python Pickle은 nested namedtuple save를 지원하지 않음
 # https://stackoverflow.com/questions/4677012/python-cant-pickle-type-x-attribute-lookup-failed
+
 Transition = namedtuple('Transition', ('state', 'action', 'reward', 'next_state', 'done'))
 
 
@@ -34,8 +30,8 @@ class Actor(nn.Module):
 
     def __init__(self, state_size, action_size, action_range=(-1, 1)):
         super(Actor, self).__init__()
+        self.device = TrainerMetadata().device
         self.layer_sizes = [state_size, 400, 300, action_size]
-        # self.layer_size = [state_size, 256, 128, action_size]
 
         # TODO: 정규화된 입력인지 검사 문구 넣고 range 빼기
         self.action_low, self.action_high = action_range
@@ -51,13 +47,14 @@ class Actor(nn.Module):
         x = F.relu(self.linear2(x))
         x = self.head(torch.tanh(x))
         # TODO: 값 잘라야 하나?
-        return torch.clamp(x, min=self.action_low, max=self.action_high).to(device)
+        return torch.clamp(x, min=self.action_low, max=self.action_high).to(self.device)
 
 
 class Critic(nn.Module):
 
     def __init__(self, state_size, action_size):
         super(Critic, self).__init__()
+        self.device = TrainerMetadata().device
         self.layer_sizes = [state_size + action_size, 400, 300, action_size]
 
         self.linear1 = nn.Linear(self.layer_sizes[0], self.layer_sizes[1])
@@ -72,17 +69,19 @@ class Critic(nn.Module):
     # (a) 2번째 직전까진 안 넣었으니 2번째에 넣었을 것이다
     # (b) 2번째 까지는 안 넣었으니 3번째에 넣었을 것이다
     def forward(self, state, action):
-        x = torch.cat((state, action), dim=1).to(device)
+        # TODO: 매 번 cat 하지 말고 메모리에 넣을 때 state, action 붙여서 넣기 (꼼수)
+        x = torch.cat((state, action), dim=1).to(self.device)
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
         # TODO: torch.clamp (v -mean) 으로 정규화 필요
         return self.head(x)
 
 
-class DDPG(TorchSerializable):
+class DDPG(u.TorchSerializable):
 
     def __init__(self, state_size, action_size, action_range=(-1, 1)):
         self._set_hyper_parameters()
+        self.device = TrainerMetadata().device
 
         # 기본 설정
         self.state_size = state_size
@@ -91,11 +90,11 @@ class DDPG(TorchSerializable):
         # TODO: 정규화된 입력인지 검사 문구 넣고 range 빼기
         self.action_low, self.action_high = action_range
 
-        # 6. 모델 빌드
-        self.actor = Actor(self.state_size, self.action_size).to(device)
-        self.critic = Critic(self.state_size, self.action_size).to(device)
-        self.target_actor = Actor(self.state_size, self.action_size).to(device)
-        self.target_critic = Critic(self.state_size, self.action_size).to(device)
+        # 모델 빌드
+        self.actor = Actor(self.state_size, self.action_size).to(self.device)
+        self.critic = Critic(self.state_size, self.action_size).to(self.device)
+        self.target_actor = Actor(self.state_size, self.action_size).to(self.device)
+        self.target_critic = Critic(self.state_size, self.action_size).to(self.device)
 
         # 타겟 정책망, 타겟 평가망 가중치를 각각 정책망, 평가망 가중치로 초기화
         self.target_actor.load_state_dict(self.actor.state_dict())
@@ -185,7 +184,7 @@ class DDPG(TorchSerializable):
         #   ||r' - [r + (r+1)']|| = 0
         # ∴ ||r' - (r+1)'      || = r  (현재 Q함수와 다음 Q함수 차이가 딱 실제 보상이 되도록 학습)
         self.critic_optimizer.zero_grad()
-        critic_loss = nn.MSELoss().to(device)
+        critic_loss = nn.MSELoss().to(self.device)
         critic_loss = critic_loss(expected_rewards, predicted_rewards)
         critic_loss.backward()
         self.critic_optimizer.step()
@@ -221,8 +220,8 @@ class DDPG(TorchSerializable):
         # sum 이 아니라 mean 인 이유
         # -> sum이든 mean이든 똑같으나 (N은 같으므로)
         # -> sum 했을 때 값이 많이 커지니까 그냥 보기 좋게 mean으로..
-        # actor_loss = -1*torch.sum(q_output).to(device)
-        actor_loss = -1 * torch.mean(q_output).to(device)
+        # actor_loss = -1*torch.sum(q_output).to(self.device)
+        actor_loss = -1 * torch.mean(q_output).to(self.device)
 
         # 정책망의 예측 보상을 정책 그라디언트로 업데이트
         # ∇θµ[Q(s,a|θ)] ∇θµ[µ(s|θµ)]
@@ -233,16 +232,14 @@ class DDPG(TorchSerializable):
         u.soft_update_from_to(src_nn=self.critic, dst_nn=self.target_critic, tau=self.soft_target_update_tau)
         u.soft_update_from_to(src_nn=self.actor, dst_nn=self.target_actor, tau=self.soft_target_update_tau)
 
-        # 그래프 그리기용
-        # viz.draw_line(y=critic_loss.item(), interval=10, name="critic_loss")
-        # viz.draw_line(y=actor_loss.item(), interval=10, name="actor_loss")
         return critic_loss, actor_loss
 
 
-class RLAgent(TorchSerializable):
+class RLAgent(u.TorchSerializable):
 
     def __init__(self, state_size, action_size, action_range=(-1, 1)):
         self._set_hyper_parameters()
+        self.device = TrainerMetadata().device
 
         # 기본 설정
         self.state_size = state_size
@@ -252,7 +249,7 @@ class RLAgent(TorchSerializable):
         self.action_low, self.action_high = action_range
 
         self.ddpg = DDPG(self.state_size, self.action_size, action_range)
-        self.im = PredictiveSurpriseMotivation(self.state_size, self.action_size, device, viz)
+        self.im = PredictiveSurpriseMotivation(self.state_size, self.action_size)
 
         # TODO: 리플레이 메모리를 DDPG 알고리즘에서 분리해서 저장하는 게 아름다운가?
         # 리플레이 메모리
@@ -290,7 +287,7 @@ class RLAgent(TorchSerializable):
             u.t_uint8(done)
         )
 
-    def train_model(self, i_episode, step):
+    def train_model(self, i_episode, step, done):
         # 메모리에서 일정 크기만큼 기억을 불러온다
         # 그 후 기억을 모아 각 변수별로 모은다. (즉, 전치행렬)
         # TODO: random과 zip func 글카에서 하기
@@ -301,10 +298,10 @@ class RLAgent(TorchSerializable):
         # TODO: 이거 튜플로 묶으면 다시 GPU에서 CPU로 오나?
         # 텐서의 집합에서 고차원 텐서로
         # tuple(tensor, ...) -> tensor()
-        s = torch.cat(sars_batch.state).to(device)
-        a = torch.cat(sars_batch.action).to(device)
-        ext_r = torch.cat(sars_batch.reward).to(device)
-        next_s = torch.cat(sars_batch.next_state).to(device)
+        s = torch.cat(sars_batch.state).to(self.device)
+        a = torch.cat(sars_batch.action).to(self.device)
+        ext_r = torch.cat(sars_batch.reward).to(self.device)
+        next_s = torch.cat(sars_batch.next_state).to(self.device)
 
         # int_r = self.im.get_reward(i_episode, step, s, a, next_s)
         int_r = self.im.get_reward(i_episode, step, transitions, s, a, next_s)
@@ -312,137 +309,82 @@ class RLAgent(TorchSerializable):
 
         critic_loss, actor_loss = self.ddpg.train_model(s, a, ext_r, next_s)
 
-        return critic_loss, \
-               actor_loss, \
-               torch.mean(int_r).detach().cpu(), \
-               torch.mean(ext_r).detach().cpu()
-
-
-class TrainerMetadata(TorchSerializable):
-
-    def __init__(self):
-        self.current_epoch = 0
-
-        self.scores = list()
-        self.best_score = 0
-
-        self.last_critic_losses = list()
-        self.last_actor_losses = list()
-        self.last_int_r_list = list()
-        self.last_ext_r_list = list()
-
-    def state_dict_impl(self):
-        return {
-            'current_epoch': self.current_epoch + 1,
-            'scores': self.scores,
-            'best_score': self.best_score,
-            'last_critic_losses': self.last_critic_losses,
-            'last_actor_losses': self.last_actor_losses,
-            'last_int_r_list': self.last_int_r_list,
-            'last_ext_r_list': self.last_ext_r_list,
-            'agent': agent.state_dict()
-
-        }
-
-    def load_state_dict_impl(self, var_state):
-        self.current_epoch = var_state['current_epoch']
-        self.scores.extend(var_state['scores'])
-        self.best_score = var_state['best_score']
-        self.last_critic_losses.extend(var_state['last_critic_losses'])
-        self.last_actor_losses.extend(var_state['last_actor_losses'])
-        self.last_int_r_list.extend(var_state['last_int_r_list'])
-        self.last_ext_r_list.extend(var_state['last_ext_r_list'])
-        agent.load_state_dict(var_state['agent'])
-
-    def save(self, checkpoint):
-        # state_dict 구성 속도가 느리므로 필요할 때만 구성
-        if checkpoint.is_saving_episode(self.current_epoch):
-            var_state = self.state_dict()
-            is_best = False
-            if max(self.scores) > self.best_score:
-                self.best_score = max(self.scores)
-                is_best = True
-
-            checkpoint.save_checkpoint(__file__, var_state, is_best)
-
-    def load(self, checkpoint):
-        full_path = checkpoint.get_best_model_file_name(__file__)
-        print("Loading checkpoint '{}'".format(full_path))
-        var_state = checkpoint.load_model(full_path=full_path)
-        self.load_state_dict(var_state)
-        for i_episode in range(0, len(self.scores)):
-            viz.draw_line(x=i_episode, y=self.scores[i_episode], name='last_score')
-            viz.draw_line(x=i_episode, y=self.last_actor_losses[i_episode].item(), name='last_actor_loss')
-            viz.draw_line(x=i_episode, y=self.last_critic_losses[i_episode].item(), name='last_critic_loss')
-            viz.draw_line(x=i_episode, y=self.last_int_r_list[i_episode].item(), name='last_int_r')
-            viz.draw_line(x=i_episode, y=self.last_ext_r_list[i_episode].item(), name='last_ext_r')
-        print("Loading complete. Resuming from episode: {}, score: {:.2f}".format(
-            self.current_epoch - 1, max(self.scores, default=0))
-        )
-
-    def finish_episode(self, i_episode):
-        self.current_epoch = i_episode
-
-        last_score = self.scores[-1]
-        last_actor_loss = self.last_actor_losses[-1]
-        last_critic_loss = self.last_critic_losses[-1]
-        last_int_r = self.last_int_r_list[-1]
-        last_ext_r = self.last_ext_r_list[-1]
-
-        if i_episode % LOG_INTERVAL == 0:
-            print('Episode {}\tScore: {:.2f}\tMem Length: {}\tCompute Time: {:.2f}'.format(
-                i_episode, last_score, len(agent.memory), time.time() - start_time))
-
-            viz.draw_line(y=last_score, x=i_episode, name='last_score')
-            viz.draw_line(y=last_actor_loss, x=i_episode, name='last_actor_loss')
-            viz.draw_line(y=last_critic_loss, x=i_episode, name='last_critic_loss')
-            viz.draw_line(y=last_int_r, x=i_episode, name='last_int_r')
-            viz.draw_line(y=last_ext_r, x=i_episode, name='last_ext_r')
+        if done:
+            TrainerMetadata().log(critic_loss, 'critic_loss')
+            TrainerMetadata().log(actor_loss, 'actor_loss')
+            TrainerMetadata().log(torch.max(int_r), 'int_reward', 'max')
+            TrainerMetadata().log(torch.mean(int_r), 'int_reward', 'mean')
+            TrainerMetadata().log(torch.min(int_r), 'int_reward', 'min')
+            TrainerMetadata().log(torch.max(ext_r), 'ext_reward', 'max')
+            TrainerMetadata().log(torch.mean(ext_r), 'ext_reward', 'mean')
+            TrainerMetadata().log(torch.min(ext_r), 'ext_reward', 'min')
 
 
 if __name__ == "__main__":
-    VERSION = 4
+    #####################
+    # 환경 설정
+    #####################
     # TODO: 시드 넣기
     # env.seed(args.seed)
     # torch.manual_seed(args.seed)
-    RENDER = True
-    LOG_INTERVAL = 1
+
+    # 0. 일반 설정
+    FORCE_CPU = False
+    TrainerMetadata().set_device(force_cpu=FORCE_CPU)
+
+    # 1. 시각화 관련 설정
+    VISDOM_RESET = True
+    # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
+    VIZ_ENV_NAME = '14_im_LPM_0.5_decay_0.999_min_0.01'
+
+    # 2. 저장 관련 설정
+    VERSION = 5
     IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 404
+    SAVE_FULL_PATH = __file__
+
+    # 3. 실험 환경 관련 설정
+    GYM_ENV = 'Swimmer-v2'
+    RENDER = False
+    LOG_INTERVAL = 1
     EPISODES = 30000
 
-    device = u.set_device(force_cpu=False)
-    # viz_env_name = os.path.basename(os.path.realpath(__file__) + '_0_without_im')
-    viz_env_name = os.path.basename('13_im_SM_0.5_decay_0.999_min_0.01')
-    viz = Drawer(reset=True, env=viz_env_name)
+    #####################
+    # 객체 구성
+    #####################
+    viz = Drawer(reset=VISDOM_RESET, env=VIZ_ENV_NAME)
+    checkpoint = Checkpoint(VERSION, IS_SAVE, SAVE_INTERVAL)
 
-    metadata = TrainerMetadata()
-    checkpoint_inst = Checkpoint(VERSION, IS_SAVE, SAVE_INTERVAL)
-
-    """
-    상태 공간 8개, 범위 -∞ < s < ∞
-    행동 공간 2개, 범위 -1 < a < 1
-    """
-    env = gym.make('Swimmer-v2')
+    # Agent 생성
+    env = gym.make(GYM_ENV)
     state_size = env.observation_space.shape[0]
     action_size = env.action_space.shape[0]
-
     agent = RLAgent(state_size, action_size)
 
+    # 메타데이터 관리 클래스 설정
+    TrainerMetadata().reset(
+        viz=viz,
+        checkpoint=checkpoint,
+        agent=agent,
+        force_cpu=FORCE_CPU,
+        log_interval=LOG_INTERVAL,
+        save_full_path=SAVE_FULL_PATH
+    )
+
     if IS_LOAD:
-        metadata.load(checkpoint_inst)
+        TrainerMetadata().load()
 
     # 최대 에피소드 수만큼 돌린다
-    for i_episode in range(metadata.current_epoch, EPISODES):
-        start_time = time.time()
+    for i_episode in range(TrainerMetadata().current_epoch, EPISODES):
+        TrainerMetadata().start_episode()
+
         agent.ddpg.noise.reset()
         state = env.reset()
-
-        score = last_actor_loss = last_critic_loss = last_int_r = last_ext_r = u.t_float32(0)
+        score = u.t_float32(0)
 
         # 각 에피소드당 환경에 정의된 최대 스텝 수만큼 돌린다
         # 단 그 전에 환경에서 정의된 종료 상태(done)가 나오면 거기서 끝낸다
         for t in range(env.spec.max_episode_steps):
-            viz.step()  # Visdom에 새로운 스텝 시작했음을 알림
+            TrainerMetadata().start_step()
 
             action = agent.get_action(state)
             next_state, reward, done, _ = env.step(action)
@@ -450,25 +392,24 @@ if __name__ == "__main__":
             agent.append_sample(state, action, reward, next_state, done)
 
             if len(agent.memory) >= agent.train_start:
-                last_critic_loss, last_actor_loss, last_int_r, last_ext_r = agent.train_model(i_episode, t)
+                agent.train_model(i_episode, t, done)
 
             score += reward
             state = next_state
 
             env.render() if RENDER else None
+
+            TrainerMetadata().finish_step()
             # noinspection PyPep8
             if done: break
 
-        metadata.scores.append(score.item())
-        metadata.last_actor_losses.append(last_actor_loss.item())
-        metadata.last_critic_losses.append(last_critic_loss.item())
-        metadata.last_int_r_list.append(last_int_r.item())
-        metadata.last_ext_r_list.append(last_ext_r.item())
-        metadata.finish_episode(i_episode)
+        TrainerMetadata().log(score, 'score')
+        TrainerMetadata().finish_episode(i_episode)
 
         if IS_SAVE:
-            metadata.save(checkpoint_inst)
+            TrainerMetadata().save()
 
+        # TODO: 일정 간격마다 노이즈 없이 테스트?
         # if score > env.spec.reward_threshold:
         #     print("Solved! Running reward is now {}".format(score))
         #    break

@@ -11,25 +11,23 @@ import sys
 import time
 from collections import namedtuple
 
+import gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
 
-import gym
-
 import utils_kdm as u
-from utils_kdm.checkpoint import Checkpoint, TorchSerializable
+from utils_kdm.checkpoint import Checkpoint
 from utils_kdm.drawer import Drawer
-
 
 # Python Pickle은 nested namedtuple save를 지원하지 않음
 # https://stackoverflow.com/questions/4677012/python-cant-pickle-type-x-attribute-lookup-failed
 SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
 
 
-class A2CAgent(TorchSerializable):
+class A2CAgent(u.TorchSerializable):
 
     def __init__(self, state_size, action_size):
         self._set_hyper_parameters()
@@ -128,7 +126,7 @@ class A2CAgent(TorchSerializable):
         return actor_loss, critic_loss
 
 
-class TrainerMetadata(TorchSerializable):
+class TrainerMetadata(u.TorchSerializable):
 
     def __init__(self):
         self.current_epoch = 0

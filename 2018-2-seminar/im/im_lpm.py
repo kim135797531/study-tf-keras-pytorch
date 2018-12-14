@@ -1,27 +1,13 @@
 # -*- coding: utf-8 -*-
 
-import os
-import time
-from collections import namedtuple
-
-import numpy as np
 import torch
 import torch.nn as nn
 # noinspection PyPep8Naming
 import torch.nn.functional as F
-import torch.optim as optim
-
-import gym
 
 import utils_kdm as u
-from im.region import RegionManager
-from utils_kdm.checkpoint import Checkpoint, TorchSerializable
-from utils_kdm.drawer import Drawer
-from utils_kdm.noise import OrnsteinUhlenbeckNoise
-from utils_kdm.replay_memory import ReplayMemory
-
 from im.im_base import IntrinsicMotivation
-from utils_kdm import global_device
+from im.region import RegionManager
 
 
 class StatePredictor(nn.Module):
@@ -51,8 +37,8 @@ class StatePredictor(nn.Module):
 
 class LearningProgressMotivation(IntrinsicMotivation):
 
-    def __init__(self, state_size, action_size, device, viz=None):
-        super().__init__(state_size, action_size, device, viz)
+    def __init__(self, state_size, action_size):
+        super().__init__(state_size, action_size)
         self._set_hyper_parameters()
         self.region_manager = RegionManager(self.state_size, self.action_size)
 

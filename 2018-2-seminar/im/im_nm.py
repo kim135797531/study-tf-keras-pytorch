@@ -1,26 +1,14 @@
 # -*- coding: utf-8 -*-
 
-import os
-import time
-from collections import namedtuple
-
-import numpy as np
 import torch
 import torch.nn as nn
 # noinspection PyPep8Naming
 import torch.nn.functional as F
 import torch.optim as optim
 
-import gym
-
 import utils_kdm as u
-from utils_kdm.checkpoint import Checkpoint, TorchSerializable
-from utils_kdm.drawer import Drawer
-from utils_kdm.noise import OrnsteinUhlenbeckNoise
-from utils_kdm.replay_memory import ReplayMemory
-
 from im.im_base import IntrinsicMotivation
-from utils_kdm import global_device
+from utils_kdm.trainer_metadata import TrainerMetadata
 
 
 class StatePredictor(nn.Module):
@@ -50,8 +38,8 @@ class StatePredictor(nn.Module):
 
 class NoveltyMotivation(IntrinsicMotivation):
 
-    def __init__(self, state_size, action_size, device, viz=None):
-        super().__init__(state_size, action_size, device, viz)
+    def __init__(self, state_size, action_size):
+        super().__init__(state_size, action_size)
         self._set_hyper_parameters()
 
         # Expert Network: (s, a') => (s+1')
@@ -120,10 +108,10 @@ class NoveltyMotivation(IntrinsicMotivation):
 
         # TODO: 환경 평소 보상 (1) 정도로 clip 해줄까?
         # intrinsic_reward_batch = torch.clamp(intrinsic_reward_batch, min=-2, max=2)
-        self.viz.draw_line(y=torch.mean(intrinsic_reward_batch), interval=1000, name="intrinsic_reward_batch")
+        TrainerMetadata().log('intrinsic_reward_batch', torch.mean(intrinsic_reward_batch))
 
         # TODO: 제일 처음 Expert망이 조금 학습된 다음에 내발적 동기 보상 리턴하기?
-        if self.delayed_start and (self.viz.default_step < i_episode + self.intrinsic_reward_start):
+        if self.delayed_start and (TrainerMetadata().global_step < i_episode + self.intrinsic_reward_start):
             return 0
 
         # TODO: 매 에피소드별로 vs 매 스텝별로 decay

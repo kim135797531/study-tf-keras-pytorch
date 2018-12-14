@@ -11,6 +11,7 @@ import sys
 import time
 from collections import namedtuple
 
+import gym
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,12 +19,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
 
-import gym
-
 import utils_kdm as u
-from utils_kdm.checkpoint import Checkpoint, TorchSerializable
 from utils_kdm.drawer import Drawer
-
 
 # Python Pickle은 nested namedtuple save를 지원하지 않음
 # https://stackoverflow.com/questions/4677012/python-cant-pickle-type-x-attribute-lookup-failed
@@ -67,7 +64,7 @@ class Critic(nn.Module):
         return self.head(x)
 
 
-class A2CAgent(TorchSerializable):
+class A2CAgent(u.TorchSerializable):
 
     def __init__(self, state_size, action_size):
         self._set_hyper_parameters()

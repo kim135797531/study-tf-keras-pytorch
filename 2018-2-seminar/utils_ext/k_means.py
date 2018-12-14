@@ -3,9 +3,8 @@
 # Merged kmeans.py, pairwise.py in original repo
 
 import torch
-import numpy as np
-from utils_kdm import global_device
 
+from utils_kdm.trainer_metadata import TrainerMetadata
 
 '''
 calculation of pairwise distance, and return condensed result, i.e. we omit the diagonal and duplicate entries and store everything in a one-dimensional array
@@ -19,7 +18,7 @@ def _pairwise_distance(data1, data2=None, device=None):
     we first expand the N*M matrix into N*1*M matrix A and 1*N*M matrix B
     then a simple elementwise operation of A and B will handle the pairwise operation of points represented by data
     """
-    device = device if device else global_device
+    device = device if device else TrainerMetadata().device
     if data2 is None:
         data2 = data1
 
@@ -54,7 +53,7 @@ def _group_pairwise(X, groups, device=None, fun=lambda r, c: _pairwise_distance(
     :param fun:
     :return:
     """
-    device = device if device else global_device
+    device = device if device else TrainerMetadata().device
     group_dict = {}
     for group_index_r, group_r in enumerate(groups):
         for group_index_c, group_c in enumerate(groups):
@@ -91,7 +90,7 @@ def execute(X, n_clusters, device=None, tol=1e-4):
           choice_cluster: X가 속한 클러스터 인덱스 (0~n-1)
           initial_state: 초기 좌표
     """
-    device = device if device else global_device
+    device = device if device else TrainerMetadata().device
     X = torch.from_numpy(X).float().to(device)
 
     initial_state = get_initial_state(X, n_clusters)
@@ -122,8 +121,9 @@ def execute(X, n_clusters, device=None, tol=1e-4):
 if __name__ == "__main__":
     # Example code
     import numpy as np
+    # noinspection PyPackageRequirements
     import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
+
     """
     X = [
             [x1, y1],

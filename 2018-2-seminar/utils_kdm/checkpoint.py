@@ -1,29 +1,10 @@
 # -*- coding: utf-8 -*-
 
 import os
-from abc import ABCMeta, abstractmethod
 import shutil
 import torch
 
-
-class TorchSerializable(object):
-    __metaclass__ = ABCMeta
-
-    @abstractmethod
-    def state_dict_impl(self):
-        raise NotImplementedError("Please implement this method.")
-
-    def state_dict(self):
-        ret = self.state_dict_impl()
-        return ret
-
-    @abstractmethod
-    def load_state_dict_impl(self, state_dict):
-        raise NotImplementedError("Please implement this method.")
-
-    def load_state_dict(self, state_dict):
-        ret = self.load_state_dict_impl(state_dict)
-        return ret
+from utils_kdm.trainer_metadata import TrainerMetadata
 
 
 class Checkpoint:
@@ -57,6 +38,5 @@ class Checkpoint:
             shutil.copyfile(episode_path, self.get_best_model_file_name(full_path))
 
     def load_model(self, full_path=None, device=None):
-        global global_device
-        device = device if device else global_device
+        device = device if device else TrainerMetadata().device
         return torch.load(full_path, map_location=device)
