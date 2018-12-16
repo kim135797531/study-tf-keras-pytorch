@@ -101,8 +101,10 @@ class NoveltyMotivation(IntrinsicMotivation):
 
         return state_prediction_error
 
-    def intrinsic_motivation_impl(self, i_episode, transitions, step, state_batch, action_batch, next_state_batch):
+    def intrinsic_motivation_impl(self, i_episode, step, batch_tuple, current_sars, current_done):
         # Predictive novelty motivation (NM)
+        transitions, state_batch, action_batch, reward_batch, next_state_batch = batch_tuple
+
         state_prediction_error = self._train_model(state_batch, action_batch, next_state_batch)
         intrinsic_reward_batch = self.intrinsic_scale_1 * state_prediction_error
 

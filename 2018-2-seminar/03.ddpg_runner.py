@@ -58,7 +58,8 @@ class RLAgent(u.TorchSerializable):
     def get_action(self, state):
         return self.algorithm_rl.get_action(state)
 
-    def append_sample(self, state, action, reward, next_state, done):
+    def append_sample(self, sars, done):
+        state, action, reward, next_state = sars
         self.memory.push(
             u.t_float32(state),
             u.t_float32(action),
@@ -67,7 +68,9 @@ class RLAgent(u.TorchSerializable):
             u.t_uint8(done)
         )
 
-    def train_model(self, i_episode, step, done):
+    def train_model(self, i_episode, current_step, current_sars, current_done):
+        current_state, current_action, current_reward, current_next_state = current_sars
+
         # 메모리에서 일정 크기만큼 기억을 불러온다
         # 그 후 기억을 모아 각 변수별로 모은다. (즉, 전치행렬)
         # TODO: random과 zip func 글카에서 하기
@@ -83,20 +86,32 @@ class RLAgent(u.TorchSerializable):
         ext_r = torch.cat(sars_batch.reward).to(self.device)
         next_s = torch.cat(sars_batch.next_state).to(self.device)
 
-        if self.use_intrinsic:
-            int_r = self.algorithm_im.get_reward(i_episode, step, transitions, s, a, next_s)
-            if done:
-                TrainerMetadata().log(torch.max(int_r), 'int_reward', 'max')
-                TrainerMetadata().log(torch.mean(int_r), 'int_reward', 'mean')
-                TrainerMetadata().log(torch.min(int_r), 'int_reward', 'min')
-            ext_r = self.algorithm_im.weighted_reward_batch(int_r, ext_r)
+        int_ext_r = ext_r
 
-        if done:
+        batch_tuple = (transitions, s, a, ext_r, next_s)
+
+        if self.use_intrinsic and current_step % 10 == 0:
+            int_r = self.algorithm_im.get_reward(i_episode, current_step, batch_tuple, current_sars, current_done)
+
+            # if current_done:
+            int_ext_r, int_r, ext_r = self.algorithm_im.weighted_reward_batch(int_r, ext_r)
+            TrainerMetadata().log(torch.max(int_r), 'int_reward', 'max')
+            TrainerMetadata().log(torch.mean(int_r), 'int_reward', 'mean')
+            TrainerMetadata().log(torch.min(int_r), 'int_reward', 'min')
+            TrainerMetadata().log(torch.max(int_ext_r), 'int_ext_reward', 'max')
+            TrainerMetadata().log(torch.mean(int_ext_r), 'int_ext_reward', 'mean')
+            TrainerMetadata().log(torch.min(int_ext_r), 'int_ext_reward', 'min')
+            TrainerMetadata().log(self.algorithm_im.intrinsic_reward_ratio, 'intrinsic_reward_ratio')
+
+        if current_done:
+            self.algorithm_im.scale_annealing()
+
+        if current_done:
             TrainerMetadata().log(torch.max(ext_r), 'ext_reward', 'max')
             TrainerMetadata().log(torch.mean(ext_r), 'ext_reward', 'mean')
             TrainerMetadata().log(torch.min(ext_r), 'ext_reward', 'min')
 
-        self.algorithm_rl.train_model(s, a, ext_r, next_s, done)
+        self.algorithm_rl.train_model(s, a, int_ext_r, next_s, current_done)
 
 
 if __name__ == "__main__":
@@ -114,11 +129,11 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '14_im_LPM_0.5_decay_0.999_min_0.01'
+    VIZ_ENV_NAME = '16_im_(LPM_0.9)(10step)(region1000)(annealing99.9%,min0.001)'
 
     # 2. 저장 관련 설정
     VERSION = 1
-    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 404
+    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 401
     SAVE_FULL_PATH = __file__
 
     # 3. 실험 환경 관련 설정
@@ -143,8 +158,9 @@ if __name__ == "__main__":
     action_range = (min(env.action_space.low), max(env.action_space.high))
 
     # algorithm_im = NoveltyMotivation(state_size, action_size)
-    # algorithm_im = LearningProgressMotivation(state_size, action_size)
-    algorithm_im = PredictiveSurpriseMotivation(state_size, action_size)
+    algorithm_im = LearningProgressMotivation(state_size, action_size)
+    # algorithm_im = PredictiveSurpriseMotivation(state_size, action_size)
+
     algorithm_rl = DDPG(state_size, action_size, action_range)
     agent = RLAgent(algorithm_im, algorithm_rl,
                     state_size, action_size, action_range,
@@ -179,10 +195,11 @@ if __name__ == "__main__":
             action = agent.get_action(state)
             next_state, reward, done, _ = env.step(action)
 
-            agent.append_sample(state, action, reward, next_state, done)
+            sars = (state, action, reward, next_state)
+            agent.append_sample(sars, done)
 
             if len(agent.memory) >= agent.train_start:
-                agent.train_model(i_episode, t, done)
+                agent.train_model(i_episode, t, sars, done)
 
             score += reward
             state = next_state

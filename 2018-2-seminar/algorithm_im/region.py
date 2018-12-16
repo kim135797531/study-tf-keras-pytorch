@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 import utils_kdm as u
+from utils_kdm import ManageDevice
 from utils_kdm.trainer_metadata import TrainerMetadata
 
 
@@ -34,6 +35,7 @@ class Expert(nn.Module):
         # 그냥 일렬로 합쳐기
         # Oudeyer (2007)
         x = torch.cat((state, action), dim=1)
+        # x = s_a
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
         return self.head(x)
@@ -46,6 +48,7 @@ class Region(u.TorchSerializable):
     def __init__(self, state_size, action_size):
         self._set_hyper_parameters()
         self.device = TrainerMetadata().device
+        # self.device = torch.device('cpu')
         self.state_size = state_size
         self.action_size = action_size
 
@@ -99,6 +102,9 @@ class Region(u.TorchSerializable):
         self.right_child = right_child
         # TODO: 삭제하면 자식 노드에 영향 X?
         del self.samples
+        del self.expert
+        del self.expert_optimizer
+        del self.loss_queue
 
     def global_dim_to_local_dim(self, global_dim):
         # ex) state가 8개, action이 2개면
@@ -146,6 +152,26 @@ class Region(u.TorchSerializable):
         # if len(self.samples) > 1:
         self._train_model()
 
+    def get_past_error_mean(self):
+        if len(self.loss_queue) < self.loss_queue.maxlen:
+            return 1
+
+        past_error_sum = 0
+        for i in range(self.past_time, self.past_time + self.time_window):
+            past_error_sum += self.loss_queue[-i]
+
+        return past_error_sum / self.time_window
+
+    def get_current_error_mean(self):
+        if len(self.loss_queue) < self.loss_queue.maxlen:
+            return 1
+
+        current_error_sum = 0
+        for i in range(0, self.time_window):
+            current_error_sum += self.loss_queue[-i]
+
+        return current_error_sum / self.time_window
+
 
 class RegionManager(u.TorchSerializable):
 
@@ -154,10 +180,11 @@ class RegionManager(u.TorchSerializable):
         self.device = TrainerMetadata().device
         self.region_head = Region(state_size, action_size)
         self.exemplar_structure = namedtuple('Exemplar', ('state', 'action', 'next_state'))
+        self.region_node_len = 0
 
     def _set_hyper_parameters(self):
-        # 논문의 C1 상수
-        self.region_maxlen = 250
+        # TODO: 논문의 C1 상수 = 250
+        self.region_maxlen = 1000
         # 분산 계산할 때 각 리전에 최소 2개 이상씩은 있어야 함
         assert(self.region_maxlen >= 4)
 
@@ -171,10 +198,13 @@ class RegionManager(u.TorchSerializable):
 
     def add(self, sample):
         region = self.find_region(sample)
+        # region = self.region_head
         region.add(sample)
 
         if self.met_criterion_1(region):
             self.split_region(region)
+            self.region_node_len += 2
+            TrainerMetadata().viz.draw_line(x=self.region_node_len/2, y=self.region_node_len * self.region_maxlen, win='total_sample_capacity')
 
     def met_criterion_1(self, region):
         return True if len(region.samples) > self.region_maxlen else False
@@ -186,15 +216,19 @@ class RegionManager(u.TorchSerializable):
         for dim in range(n_dim):
             # FIXME: 여기 100% 동작 안 할 듯
             # TODO: 여러 dim에 대해 동시에 돌리기
-            # weighted_var, index = self.find_minimum_variance(region, dim)
-            weighted_var = 0
-            index = 5
+            weighted_var, index = self.find_minimum_variance(region, dim)
+            # weighted_var = 0
+            # index = 5
             if min_weighted_var is None or min_weighted_var > weighted_var:
                 min_weighted_var = weighted_var
                 min_index = index
                 min_cutting_dim = dim
 
         first_dim, second_dim = region.global_dim_to_local_dim(min_cutting_dim)
+        # if first_dim == 0:
+        #     print("상태 {}, 최저 분산 {:.4f}".format(second_dim, min_weighted_var.item()))
+        # else:
+        #     print("행동 {}, 최저 분산 {:.4f}".format(second_dim, min_weighted_var.item()))
         # TODO: 나중에 find_minimum_variance에서 Region 만들어서 넘겨주면 삭제
         region.samples.sort(key=lambda elem: elem[first_dim][0][second_dim])
         min_left_child = Region(region.state_size, region.action_size)

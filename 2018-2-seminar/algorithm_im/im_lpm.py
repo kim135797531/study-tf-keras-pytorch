@@ -46,7 +46,6 @@ class LearningProgressMotivation(IntrinsicMotivation):
         super()._set_hyper_parameters()
 
     def state_dict_impl(self):
-        todo = super().state_dict_impl()
         # TODO: 저장 불러오기
         todo = {
         }
@@ -54,18 +53,27 @@ class LearningProgressMotivation(IntrinsicMotivation):
 
     def load_state_dict_impl(self, var_state):
         # TODO: 저장 불러오기
-        super().load_state_dict(var_state)
+        pass
 
-    def intrinsic_motivation_impl(self, i_episode, step, transitions, state_batch, action_batch, next_state_batch):
+    def intrinsic_motivation_impl(self, i_episode, step, batch_tuple, current_sars, current_done):
         # Predictive novelty motivation (NM)
-        for transition in transitions:
-            # TODO: 속도..
-            examplar = self.region_manager.exemplar_structure(
-                transition.state, transition.action, transition.next_state
-            )
-            self.region_manager.add(examplar)
+        transitions, state_batch, action_batch, reward_batch, next_state_batch = batch_tuple
+        current_state, current_action, current_reward, current_next_state = current_sars
+
+        examplar = self.region_manager.exemplar_structure(
+            u.t_float32(current_state),
+            u.t_float32(current_action),
+            u.t_float32(current_next_state)
+        )
+        self.region_manager.add(examplar)
 
         intrinsic_reward_batch = torch.zeros(128).to(self.device)
+
+        for i, transition in enumerate(transitions):
+            region = self.region_manager.find_region(transition)
+            past_error = region.get_past_error_mean()
+            current_error = region.get_current_error_mean()
+            intrinsic_reward_batch[i] = past_error - current_error
 
         # TODO: 환경 평소 보상 (1) 정도로 clip 해줄까?
         # intrinsic_reward_batch = torch.clamp(intrinsic_reward_batch, min=-2, max=2)
