@@ -56,7 +56,7 @@ class LearningProgressMotivation(IntrinsicMotivation):
         pass
 
     def intrinsic_motivation_impl(self, i_episode, step, batch_tuple, current_sars, current_done):
-        # Predictive novelty motivation (NM)
+        # Learning progress motivation (LPM)
         transitions, state_batch, action_batch, reward_batch, next_state_batch = batch_tuple
         current_state, current_action, current_reward, current_next_state = current_sars
 
