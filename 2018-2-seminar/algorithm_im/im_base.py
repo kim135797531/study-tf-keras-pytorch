@@ -46,30 +46,32 @@ class IntrinsicMotivation(TorchSerializable):
                 self.intrinsic_reward_ratio > self.intrinsic_reward_ratio_min:
             self.intrinsic_reward_ratio *= self.intrinsic_reward_ratio_decay
 
-    def weighted_reward_batch(self, intrinsic, extrinsic):
+    def weighted_reward(self, intrinsic, extrinsic):
         # Oudeyer는 내적 동기랑 환경으로부터의 보상이랑 합칠 때 가중합을 제안
         # 파라미터(비율)는 미제시
+        weighted_int_ext, weighted_int, weighted_ext = 0, 0, 0
+
         if self.intrinsic_reward_ratio == 0:
-            return extrinsic, 0, extrinsic
+            weighted_int_ext = extrinsic
         elif self.intrinsic_reward_ratio == 1:
-            return intrinsic, intrinsic, 0
+            weighted_int_ext = intrinsic
         else:
             weighted_int = self.intrinsic_reward_ratio * intrinsic
             weighted_ext = (1 - self.intrinsic_reward_ratio) * extrinsic
             weighted_int_ext = weighted_int + weighted_ext
-            return weighted_int_ext, weighted_int, weighted_ext
+
+        return weighted_int_ext, weighted_int, weighted_ext
 
     @abstractmethod
-    def intrinsic_motivation_impl(self, i_episode, step, batch_tuple, current_sars, current_done):
+    def intrinsic_motivation_impl(self, i_episode, step, current_sars, current_done):
         raise NotImplementedError("Please implement this method.")
 
-    def intrinsic_motivation(self, i_episode, step, batch_tuple, current_sars, current_done):
-        intrinsic_reward_batch = self.intrinsic_motivation_impl(i_episode, step, batch_tuple, current_sars, current_done)
-        return intrinsic_reward_batch
+    def intrinsic_motivation(self, i_episode, step, current_sars, current_done):
+        intrinsic_reward = self.intrinsic_motivation_impl(i_episode, step, current_sars, current_done)
+        return intrinsic_reward
 
-    def get_reward(self, i_episode, step, batch_tuple, current_sars, current_done):
+    def get_reward(self, i_episode, step, current_sars, current_done):
         if self.intrinsic_reward_ratio == 0:
-            transitions, state_batch, action_batch, reward_batch, next_state_batch = batch_tuple
-            return torch.zeros_like(state_batch).to(self.device)
+            return 0
 
-        return self.intrinsic_motivation(i_episode, step, batch_tuple, current_sars, current_done)
+        return self.intrinsic_motivation(i_episode, step, current_sars, current_done)

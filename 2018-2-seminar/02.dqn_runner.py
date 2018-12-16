@@ -88,7 +88,7 @@ class RLAgent(u.TorchSerializable):
                 TrainerMetadata().log(torch.max(int_r), 'int_reward', 'max')
                 TrainerMetadata().log(torch.mean(int_r), 'int_reward', 'mean')
                 TrainerMetadata().log(torch.min(int_r), 'int_reward', 'min')
-            ext_r = self.algorithm_im.weighted_reward_batch(int_r, ext_r)
+            ext_r = self.algorithm_im.weighted_reward(int_r, ext_r)
 
         if done:
             TrainerMetadata().log(torch.max(ext_r), 'ext_reward', 'max')

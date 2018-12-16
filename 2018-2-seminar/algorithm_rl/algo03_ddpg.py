@@ -12,6 +12,7 @@ import torch.optim as optim
 
 import utils_kdm as u
 from utils_kdm.noise import OrnsteinUhlenbeckNoise
+from utils_kdm.replay_memory import ReplayMemory
 from utils_kdm.trainer_metadata import TrainerMetadata
 
 # Python Pickle은 nested namedtuple save를 지원하지 않음
@@ -108,6 +109,11 @@ class DDPG(u.TorchSerializable):
             weight_decay=self.l2_weight_decay
         )
 
+        # 리플레이 메모리
+        # DQN, DDPG에서 제안하고 쓰는 개념이므로 정의는 따로 두더라도 인스턴스는 알고리즘 내부에서 갖고 있는다
+        self.transition_structure = Transition
+        self.memory = ReplayMemory(self.memory_maxlen, self.transition_structure)
+
         # 오른스타인-우렌벡 과정
         self.noise = OrnsteinUhlenbeckNoise(self.action_size)
 
@@ -127,6 +133,12 @@ class DDPG(u.TorchSerializable):
         # 타겟망 덮어 씌우기 하이퍼 파라미터
         self.soft_target_update_tau = 0.001
 
+        # 리플레이 메모리 관련
+        self.batch_size = 128
+        # self.memory_maxlen = int(1e+6)
+        self.memory_maxlen = 750000
+        self.train_start = 2000
+
     def state_dict_impl(self):
         return {
             'actor': self.actor.state_dict(),
@@ -135,6 +147,7 @@ class DDPG(u.TorchSerializable):
             'target_critic': self.target_critic.state_dict(),
             'actor_optimizer': self.actor_optimizer.state_dict(),
             'critic_optimizer': self.critic_optimizer.state_dict(),
+            'memory': self.memory.state_dict(),
             'noise': self.noise.state_dict()
         }
 
@@ -145,10 +158,21 @@ class DDPG(u.TorchSerializable):
         self.target_critic.load_state_dict(var_state['target_critic'])
         self.actor_optimizer.load_state_dict(var_state['actor_optimizer'])
         self.critic_optimizer.load_state_dict(var_state['critic_optimizer'])
+        self.memory.load_state_dict(var_state['memory'])
         self.noise.load_state_dict(var_state['noise'])
 
     def reset(self):
         self.noise.reset()
+
+    def append_sample(self, sars, done):
+        state, action, reward, next_state = sars
+        self.memory.push(
+            u.t_float32(state),
+            u.t_float32(action),
+            u.t_float32(reward),
+            u.t_float32(next_state),
+            u.t_uint8(done)
+        )
 
     def get_action(self, state):
         state = u.t_from_np_to_float32(state)
@@ -159,21 +183,36 @@ class DDPG(u.TorchSerializable):
         return np.clip(action, a_min=self.action_low, a_max=self.action_high)
         # return action
 
-    def train_model(self, state_batch, action_batch, reward_batch, next_state_batch, done):
+    def train_model(self, sars, done):
+        # 메모리에서 일정 크기만큼 기억을 불러온다
+        # 그 후 기억을 모아 각 변수별로 모은다. (즉, 전치행렬)
+        # TODO: random과 zip func 글카에서 하기
+        transitions = self.memory.sample(self.batch_size)
+        # SARS = State, Action, Reward, next State
+        sars_batch = self.transition_structure(*zip(*transitions))
+
+        # TODO: 이거 튜플로 묶으면 다시 GPU에서 CPU로 오나?
+        # 텐서의 집합에서 고차원 텐서로
+        # tuple(tensor, ...) -> tensor()
+        s_batch = torch.cat(sars_batch.state).to(self.device)
+        a_batch = torch.cat(sars_batch.action).to(self.device)
+        r_batch = torch.cat(sars_batch.reward).to(self.device)
+        next_s_batch = torch.cat(sars_batch.next_state).to(self.device)
+
         # <평가망(critic) 최적화>
         # (무엇을, 어디서, 어떻게, 왜)
         # 각각의 기억에 대해, 타겟 정책망에, 다음 상태를 넣어서, 다음 타겟 액션을 구한다.
         # 각각의 기억에 대해, 타겟 평가망에, 다음 상태와 타겟 액션을 넣어서, 다음 타겟 보상을 구한다.
         # (s+1) => (a+1)
         # (s+1), (a+1) => (r+1)'
-        target_actions = self.target_actor(next_state_batch)
-        target_rewards = self.target_critic(next_state_batch, target_actions)
+        target_actions = self.target_actor(next_s_batch)
+        target_rewards = self.target_critic(next_s_batch, target_actions)
         # (보상) + (다음 보상)' = 기대하는 보상 (재귀적으로 생각하자 = 큐러닝 기본 상기하기)
         # (보상)'             = 예측한 보상
         # r + (r+1)'
         # r'
-        expected_rewards = reward_batch.unsqueeze(dim=1) + self.discount_factor * target_rewards
-        predicted_rewards = self.critic(state_batch, action_batch)
+        expected_rewards = r_batch.unsqueeze(dim=1) + self.discount_factor * target_rewards
+        predicted_rewards = self.critic(s_batch, a_batch)
 
         # 예측한 보상과 향후 기대하는 보상을 MSE 비교 후 업데이트
         #   ||r' - [r + (r+1)']|| = 0
@@ -208,9 +247,9 @@ class DDPG(u.TorchSerializable):
         self.actor_optimizer.zero_grad()
 
         # µ(s|θµ)
-        predicted_actions = self.actor(state_batch)
+        predicted_actions = self.actor(s_batch)
         # Q(s,a|θ)
-        q_output = self.critic(state_batch, predicted_actions)
+        q_output = self.critic(s_batch, predicted_actions)
 
         # sum 이 아니라 mean 인 이유
         # -> sum이든 mean이든 똑같으나 (N은 같으므로)
@@ -228,7 +267,7 @@ class DDPG(u.TorchSerializable):
         u.soft_update_from_to(src_nn=self.actor, dst_nn=self.target_actor, tau=self.soft_target_update_tau)
 
         if done:
-            TrainerMetadata().log(critic_loss, 'critic_loss')
-            TrainerMetadata().log(actor_loss, 'actor_loss')
+            TrainerMetadata().log(critic_loss, 'critic_loss', show_only_last=False)
+            TrainerMetadata().log(actor_loss, 'actor_loss', show_only_last=False)
 
 

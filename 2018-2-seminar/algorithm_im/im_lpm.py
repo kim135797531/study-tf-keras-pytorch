@@ -55,9 +55,8 @@ class LearningProgressMotivation(IntrinsicMotivation):
         # TODO: 저장 불러오기
         pass
 
-    def intrinsic_motivation_impl(self, i_episode, step, batch_tuple, current_sars, current_done):
+    def intrinsic_motivation_impl(self, i_episode, step, current_sars, current_done):
         # Learning progress motivation (LPM)
-        transitions, state_batch, action_batch, reward_batch, next_state_batch = batch_tuple
         current_state, current_action, current_reward, current_next_state = current_sars
 
         examplar = self.region_manager.exemplar_structure(
@@ -67,16 +66,21 @@ class LearningProgressMotivation(IntrinsicMotivation):
         )
         self.region_manager.add(examplar)
 
-        intrinsic_reward_batch = torch.zeros(128).to(self.device)
+        # intrinsic_reward_batch = torch.zeros(128).to(self.device)
+        #
+        # for i, transition in enumerate(transitions):
+        #     region = self.region_manager.find_region(transition)
+        #     past_error = region.get_past_error_mean()
+        #     current_error = region.get_current_error_mean()
+        #     intrinsic_reward_batch[i] = past_error - current_error
 
-        for i, transition in enumerate(transitions):
-            region = self.region_manager.find_region(transition)
-            past_error = region.get_past_error_mean()
-            current_error = region.get_current_error_mean()
-            intrinsic_reward_batch[i] = past_error - current_error
+        region = self.region_manager.find_region(examplar)
+        past_error = region.get_past_error_mean()
+        current_error = region.get_current_error_mean()
+        intrinsic_reward = past_error - current_error
 
         # TODO: 환경 평소 보상 (1) 정도로 clip 해줄까?
         # intrinsic_reward_batch = torch.clamp(intrinsic_reward_batch, min=-2, max=2)
         # self.viz.draw_line(y=torch.mean(intrinsic_reward_batch), interval=1000, name="intrinsic_reward_batch")
 
-        return intrinsic_reward_batch
+        return intrinsic_reward

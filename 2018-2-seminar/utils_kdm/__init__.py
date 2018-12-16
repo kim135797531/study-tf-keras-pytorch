@@ -61,6 +61,17 @@ def t_from_np_to_float32(item, device=None):
     return torch.from_numpy(item).float().to(device)
 
 
+def maybe_float(item):
+    # 텐서가 들어오든 numpy float가 들어오든 그냥 float가 들어오든 무조건 float로 반환
+    """
+    if isinstance(item, torch.Tensor):
+        item = item.item()
+    elif isinstance(item, np.floating):
+        item = item.tolist()
+    """
+    return float(item)
+
+
 #####################
 # Torch 신경망 가중치 초기화 및 조작 관련
 #####################

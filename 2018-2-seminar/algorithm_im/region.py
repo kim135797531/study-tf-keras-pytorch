@@ -71,7 +71,7 @@ class Region(u.TorchSerializable):
     def _set_hyper_parameters(self):
         # TODO: 저장, 로드
         # Expert망 Adam 학습률
-        self.learning_rate_expert = 0.001
+        self.learning_rate_expert = 0.01
         # 아래와 같이 하면 (t-40 ~ t-15) 와 (t-25 ~ t) 사이의 에러를 비교하게 된다
         # 논문에서 theta, 얼마나 전의 기록이랑 비교할 것인가
         self.past_time = 15
@@ -123,25 +123,26 @@ class Region(u.TorchSerializable):
         second = global_dim
         return first, second
 
-    def _train_model(self):
+    def _train_model(self, train_repeat=1):
         samples = self.exemplar_structure(*zip(*self.samples))
         s = torch.cat(samples.state).to(self.device)
         a = torch.cat(samples.action).to(self.device)
         next_s = torch.cat(samples.next_state).to(self.device)
 
-        predicted_next_s = self.expert(s, a)
+        for i in range(0, train_repeat):
+            predicted_next_s = self.expert(s, a)
 
-        # TODO: 상태 예측기도 DDPG 처럼 타겟망까지 만들어서 예측? 아니면 단순한 순차 선형 신경망?
-        # state_prediction_error = nn.L1Loss(reduction='none').to(self.device)
-        # state_prediction_error = state_prediction_error(predicted_next_s.detach(), next_s.detach())
-        # state_prediction_error = torch.sum(state_prediction_error, dim=1).to(self.device)
+            # TODO: 상태 예측기도 DDPG 처럼 타겟망까지 만들어서 예측? 아니면 단순한 순차 선형 신경망?
+            # state_prediction_error = nn.L1Loss(reduction='none').to(self.device)
+            # state_prediction_error = state_prediction_error(predicted_next_s.detach(), next_s.detach())
+            # state_prediction_error = torch.sum(state_prediction_error, dim=1).to(self.device)
 
-        # 상태 예측기 최적화
-        self.expert_optimizer.zero_grad()
-        state_predictor_loss = nn.MSELoss().to(self.device)  # 배치니까 mean 해줘야 할 듯?
-        state_predictor_loss = state_predictor_loss(predicted_next_s, next_s)
-        state_predictor_loss.backward()
-        self.expert_optimizer.step()
+            # 상태 예측기 최적화
+            self.expert_optimizer.zero_grad()
+            state_predictor_loss = nn.MSELoss().to(self.device)  # 배치니까 mean 해줘야 할 듯?
+            state_predictor_loss = state_predictor_loss(predicted_next_s, next_s)
+            state_predictor_loss.backward()
+            self.expert_optimizer.step()
 
         self.loss_queue.append(state_predictor_loss.item())
 
@@ -180,13 +181,18 @@ class RegionManager(u.TorchSerializable):
         self.device = TrainerMetadata().device
         self.region_head = Region(state_size, action_size)
         self.exemplar_structure = namedtuple('Exemplar', ('state', 'action', 'next_state'))
-        self.region_node_len = 0
 
     def _set_hyper_parameters(self):
         # TODO: 논문의 C1 상수 = 250
-        self.region_maxlen = 1000
+        self.region_maxlen = 250
         # 분산 계산할 때 각 리전에 최소 2개 이상씩은 있어야 함
         assert(self.region_maxlen >= 4)
+
+        # TODO: 최적화 전이라서 각 dim별로 모든 split을 다 검사하는 것은 너무 느림
+        # ex) 한 dim의 자료가 100개라면
+        # 기존: 2/98, 3/97, 4/96, ... 전부 검사
+        # 지금: 2/98, 12/88, 22/84, ... 이렇게 검사
+        self.variance_finder_step = 10
 
     def state_dict_impl(self):
         # TODO: 저장, 로드
@@ -203,8 +209,6 @@ class RegionManager(u.TorchSerializable):
 
         if self.met_criterion_1(region):
             self.split_region(region)
-            self.region_node_len += 2
-            TrainerMetadata().viz.draw_line(x=self.region_node_len/2, y=self.region_node_len * self.region_maxlen, win='total_sample_capacity')
 
     def met_criterion_1(self, region):
         return True if len(region.samples) > self.region_maxlen else False
@@ -233,14 +237,19 @@ class RegionManager(u.TorchSerializable):
         region.samples.sort(key=lambda elem: elem[first_dim][0][second_dim])
         min_left_child = Region(region.state_size, region.action_size)
         min_left_child.samples = region.samples[:min_index]
-        min_left_child._train_model()
+        # FIXME: 10번 정도 미리 돌려줄까?
+        PRE_TRAIN = 1
+        min_left_child._train_model(train_repeat=PRE_TRAIN)
         min_right_child = Region(region.state_size, region.action_size)
         min_right_child.samples = region.samples[min_index:]
-        min_right_child._train_model()
+        min_right_child._train_model(train_repeat=PRE_TRAIN)
 
         min_cutting_val = min_left_child.samples[-1][first_dim][0][second_dim]
 
         region.set_as_non_leaf(min_cutting_dim, min_cutting_val, min_left_child, min_right_child)
+
+        # self.debug_regions.extend([min_left_child, min_right_child])
+        # TrainerMetadata().log(value=len(self.debug_regions), indicator='total_sample_capacity')
 
     def find_minimum_variance(self, region, dim):
         first_dim, second_dim = region.global_dim_to_local_dim(dim)
@@ -254,7 +263,7 @@ class RegionManager(u.TorchSerializable):
         min_weighted_var, min_index = None, None
         # 위에서 정렬했기 때문에 오름차순이 보장되어 있음
         # TODO: 분산이 n > 2 에서만 동작하는데 2개 이상부터 잘라도 괜찮나?
-        for i in range(2, len(next_s) - 1):
+        for i in range(2, len(next_s) - 1, self.variance_finder_step):
             left_next_s, right_next_s = torch.stack(next_s[:i]), torch.stack(next_s[i:])
             # TODO: 분산 계산.. 맞는지 모르겠다
             weighted_var = \
@@ -269,16 +278,16 @@ class RegionManager(u.TorchSerializable):
         # TODO: 추후 Region 객체를 만들어서 반환해야 함
         return min_weighted_var, min_index
 
-    def find_region(self, sample, region=None):
+    def find_region(self, sars, region=None):
         region = region if region else self.region_head
         if region.is_leaf():
             return region
 
         first_dim, second_dim = region.global_dim_to_local_dim(region.cutting_dim)
-        if region.cutting_val < sample[first_dim][0][second_dim]:
-            return self.find_region(sample, region.left_child)
+        if region.cutting_val < sars[first_dim][0][second_dim]:
+            return self.find_region(sars, region.left_child)
         else:
-            return self.find_region(sample, region.right_child)
+            return self.find_region(sars, region.right_child)
 
     """
     def em_algorithm(self, region, dim):

@@ -3,8 +3,10 @@
 import time
 from collections import defaultdict
 
+import numpy as np
 import torch
 
+import utils_kdm as u
 from utils_kdm import TorchSerializable
 from utils_kdm.manage_device import ManageDevice
 from utils_kdm.singleton import Singleton
@@ -34,7 +36,8 @@ class TrainerMetadata(TorchSerializable, Singleton):
         cls.global_step = None
 
         cls.indicators = None
-        cls._volatile_indicators = None
+        cls._last_only_indicators = None
+        cls._keep_all_indicators = None
         cls.best_score = None
 
         cls.start_time = 0
@@ -63,9 +66,16 @@ class TrainerMetadata(TorchSerializable, Singleton):
 
         # Indicators는 화면에 표시도 하고 저장/불러오기 할 지표들
         cls.indicators = _make_indicator_defaultdict()
-        # Volatile Indicators는 일단 전부 다 저장하는 곳
-        # 한 에피소드가 끝나면 indicators로 자료들 옮기고 비우기
-        cls._volatile_indicators = _make_indicator_defaultdict()
+
+        # 단순히 맨 마지막에 들어온 값으로 덮어씌워가면서 유지
+        # 한 에피소드가 끝나면 indicators로 자료 옮기기
+        cls._last_only_indicators = defaultdict(dict)
+
+        # 전부 다 저장하는 곳
+        # 한 에피소드가 끝나면 Max, Min 값 등을 구해서 indicators로 자료 옮기기
+        # 이 안을 출력하는 것은 아니다 (할 거면 진작에 log() 메소드에서 출력함)
+        cls._keep_all_indicators = _make_indicator_defaultdict()
+
         cls.best_score = 0
 
         cls.start_time = 0
@@ -92,15 +102,21 @@ class TrainerMetadata(TorchSerializable, Singleton):
         cls.best_score = var_state['best_score']
         cls.agent.load_state_dict(var_state['agent'])
 
-    def log(cls, value=0, indicator='default_win', variable='default_var', interval=1, save_only_last=True):
+    def log(cls, value=0, indicator='default_win', variable='default_var', interval=1, show_only_last=True, compute_maxmin=False):
         # TODO: 저장할 때 value의 타입이 Tensor면 .item() 해서 저장하는게 빠르려나?
         if cls.global_step % interval == 0:
-            if save_only_last:
-                # 일단 들어오는 정보 전부 모으는 곳에 저장
-                # 나중에 finish_episode 에서 맨 마지막 정보만 indicators 딕셔너리로 옮기기
-                cls._volatile_indicators[indicator][variable].append(value)
+            if show_only_last:
+                # 맨 마지막 값만 유지
+                cls._last_only_indicators[indicator][variable] = value
             else:
-                cls.indicators[indicator][variable].append(value)
+                # 전부 표시 (실시간)
+                # visdom에 x축을 auto-increment 하는 기능이 없어서 내가 만든 wrapper 메소드 사용
+                value = u.maybe_float(value)
+                cls.viz.draw_line(y=value, x=None, x_auto_increment='per_variable_step', win=indicator, variable=variable)
+
+            if compute_maxmin:
+                # 한 에피소드 당 변수의 최대/평균/최소 등을 계산하기 위해 저장
+                cls._keep_all_indicators[indicator][variable].append(value)
 
     def save(cls):
         # state_dict 구성 속도가 느리므로 필요할 때만 구성
@@ -145,27 +161,39 @@ class TrainerMetadata(TorchSerializable, Singleton):
     def finish_episode(cls, i_episode):
         cls.current_epoch = i_episode
 
-        for indicator_name, variables in cls._volatile_indicators.items():
+        for indicator_name, variables in cls._last_only_indicators.items():
+            for variable_name, variable in variables.items():
+                cls.indicators[indicator_name][variable_name].append(variable)
+
+        for indicator_name, variables in cls._keep_all_indicators.items():
             for variable_name, variable_sequence in variables.items():
+                # TODO: 그냥 max 써도 되나? torch.max?
+                # TODO: mean 일반화
+                # TODO: 사용자 정의 지표는?
+                val_max = max(variable_sequence)
+                val_min = min(variable_sequence)
+                cls.indicators[indicator_name]['max'].append(val_max)
+                cls.indicators[indicator_name]['min'].append(val_min)
+                # 맨 마지막 값은 나중에 불러오기 할 때 개략적으로나마 표시해 주기 위해
                 cls.indicators[indicator_name][variable_name].append(variable_sequence[-1])
-        cls._volatile_indicators.clear()
 
         if i_episode % cls.log_interval == 0:
             # TODO: score는 그냥 전부 있다고 가정하고 변수화?
-            last_score = cls.indicators['score']['default_var'][-1]
-            last_score = last_score.item() if isinstance(last_score, torch.Tensor) else last_score
-            if len(cls.indicators['memory_len']['default_var']) > 0:
-                memory_len = len(cls.agent.memory)
-            else:
-                memory_len = 0
+            last_score = u.maybe_float(cls.indicators['score']['default_var'][-1])
+            memory_len = len(cls.agent.algorithm_rl.memory) \
+                if len(cls.indicators['memory_len']['default_var']) > 0 \
+                else 0
+
             print('Episode {}\tScore: {:.2f}\tMem Length: {}\tCompute Time: {:.2f}'.format(
                 i_episode, last_score, memory_len, time.time() - cls.start_time))
 
             for indicator_name, variables in cls.indicators.items():
                 if 'memory' in indicator_name:
                     continue
-                for variable_name, variable_sequence in variables.items():
-                    if len(variable_sequence) > 0:
-                        y = variable_sequence[-1]
-                        y = y.item() if isinstance(y, torch.Tensor) else y
-                        cls.viz.draw_line(x=i_episode, y=y, win=indicator_name, variable=variable_name)
+
+                for variable_name, variable in variables.items():
+                    y = u.maybe_float(variable[-1])
+                    cls.viz.draw_line(x=i_episode, y=y, win=indicator_name, variable=variable_name)
+
+            cls._last_only_indicators.clear()
+            cls._keep_all_indicators.clear()

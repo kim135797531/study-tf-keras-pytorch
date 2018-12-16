@@ -12,7 +12,6 @@ from algorithm_im.im_sm import PredictiveSurpriseMotivation
 from algorithm_rl.algo03_ddpg import DDPG, Transition
 from utils_kdm.checkpoint import Checkpoint
 from utils_kdm.drawer import Drawer
-from utils_kdm.replay_memory import ReplayMemory
 from utils_kdm.trainer_metadata import TrainerMetadata
 
 
@@ -29,89 +28,44 @@ class RLAgent(u.TorchSerializable):
         self.action_low, self.action_high = action_range
 
         self.algorithm_im, self.algorithm_rl = algorithm_im, algorithm_rl
-        # TODO: 리플레이 메모리를 DDPG 알고리즘에서 분리해서 저장하는 게 아름다운가?
-        # 리플레이 메모리
-        self.transition_structure = Transition
-        self.memory = ReplayMemory(self.memory_maxlen, self.transition_structure)
-
         self.use_intrinsic = use_intrinsic
 
     def _set_hyper_parameters(self):
-        # 리플레이 메모리 관련
-        self.batch_size = 128
-        # self.memory_maxlen = int(1e+6)
-        self.memory_maxlen = 750000
-        self.train_start = 2000
+        pass
 
     def state_dict_impl(self):
         return {
             'algorithm_rl': self.algorithm_rl.state_dict(),
-            'algorithm_im': self.algorithm_im.state_dict(),
-            'memory': self.memory.state_dict()
+            'algorithm_im': self.algorithm_im.state_dict()
         }
 
     def load_state_dict_impl(self, var_state):
         self.algorithm_rl.load_state_dict(var_state['algorithm_rl'])
         self.algorithm_im.load_state_dict(var_state['algorithm_im'])
-        self.memory.load_state_dict(var_state['memory'])
 
     def get_action(self, state):
         return self.algorithm_rl.get_action(state)
 
-    def append_sample(self, sars, done):
-        state, action, reward, next_state = sars
-        self.memory.push(
-            u.t_float32(state),
-            u.t_float32(action),
-            u.t_float32(reward),
-            u.t_float32(next_state),
-            u.t_uint8(done)
-        )
-
     def train_model(self, i_episode, current_step, current_sars, current_done):
-        current_state, current_action, current_reward, current_next_state = current_sars
+        s, a, ext_reward, next_s = current_sars
+        TrainerMetadata().log(ext_reward, 'ext_reward', show_only_last=True, compute_maxmin=True)
 
-        # 메모리에서 일정 크기만큼 기억을 불러온다
-        # 그 후 기억을 모아 각 변수별로 모은다. (즉, 전치행렬)
-        # TODO: random과 zip func 글카에서 하기
-        transitions = self.memory.sample(self.batch_size)
-        # SARS = State, Action, Reward, next State
-        sars_batch = self.transition_structure(*zip(*transitions))
+        # TODO: IM 오래 걸리니 일정 단위마다
+        INTRINSIC_APPLY_INTERVAL = 1
 
-        # TODO: 이거 튜플로 묶으면 다시 GPU에서 CPU로 오나?
-        # 텐서의 집합에서 고차원 텐서로
-        # tuple(tensor, ...) -> tensor()
-        s = torch.cat(sars_batch.state).to(self.device)
-        a = torch.cat(sars_batch.action).to(self.device)
-        ext_r = torch.cat(sars_batch.reward).to(self.device)
-        next_s = torch.cat(sars_batch.next_state).to(self.device)
-
-        int_ext_r = ext_r
-
-        batch_tuple = (transitions, s, a, ext_r, next_s)
-
-        if self.use_intrinsic and current_step % 10 == 0:
-            int_r = self.algorithm_im.get_reward(i_episode, current_step, batch_tuple, current_sars, current_done)
-
-            # if current_done:
-            int_ext_r, int_r, ext_r = self.algorithm_im.weighted_reward_batch(int_r, ext_r)
-            TrainerMetadata().log(torch.max(int_r), 'int_reward', 'max')
-            TrainerMetadata().log(torch.mean(int_r), 'int_reward', 'mean')
-            TrainerMetadata().log(torch.min(int_r), 'int_reward', 'min')
-            TrainerMetadata().log(torch.max(int_ext_r), 'int_ext_reward', 'max')
-            TrainerMetadata().log(torch.mean(int_ext_r), 'int_ext_reward', 'mean')
-            TrainerMetadata().log(torch.min(int_ext_r), 'int_ext_reward', 'min')
-            TrainerMetadata().log(self.algorithm_im.intrinsic_reward_ratio, 'intrinsic_reward_ratio')
+        int_reward = 0
+        if self.use_intrinsic and current_step % INTRINSIC_APPLY_INTERVAL == 0:
+            int_reward = self.algorithm_im.get_reward(i_episode, current_step, current_sars, current_done)
+            TrainerMetadata().log(int_reward, 'int_reward', show_only_last=True, compute_maxmin=True)
 
         if current_done:
             self.algorithm_im.scale_annealing()
 
-        if current_done:
-            TrainerMetadata().log(torch.max(ext_r), 'ext_reward', 'max')
-            TrainerMetadata().log(torch.mean(ext_r), 'ext_reward', 'mean')
-            TrainerMetadata().log(torch.min(ext_r), 'ext_reward', 'min')
+        int_ext_reward, weighted_int, weighted_ext = self.algorithm_im.weighted_reward(int_reward, ext_reward)
+        TrainerMetadata().log(int_ext_reward, 'int_ext_reward', show_only_last=True, compute_maxmin=True)
 
-        self.algorithm_rl.train_model(s, a, int_ext_r, next_s, current_done)
+        current_sars = (s, a, int_ext_reward, next_s)
+        self.algorithm_rl.train_model(current_sars, current_done)
 
 
 if __name__ == "__main__":
@@ -129,7 +83,7 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '16_im_(LPM_0.9)(10step)(region1000)(annealing99.9%,min0.001)'
+    VIZ_ENV_NAME = '17_im_(LPM_0.9)(1step)(region250)(annealing99.9%,min0.001)'
 
     # 2. 저장 관련 설정
     VERSION = 1
@@ -196,9 +150,9 @@ if __name__ == "__main__":
             next_state, reward, done, _ = env.step(action)
 
             sars = (state, action, reward, next_state)
-            agent.append_sample(sars, done)
+            agent.algorithm_rl.append_sample(sars, done)
 
-            if len(agent.memory) >= agent.train_start:
+            if len(agent.algorithm_rl.memory) >= agent.algorithm_rl.train_start:
                 agent.train_model(i_episode, t, sars, done)
 
             score += reward
@@ -210,7 +164,7 @@ if __name__ == "__main__":
                 break
 
         TrainerMetadata().log(score, 'score')
-        TrainerMetadata().log(len(agent.memory), 'memory_len')
+        TrainerMetadata().log(len(agent.algorithm_rl.memory), 'memory_len')
         TrainerMetadata().finish_episode(i_episode)
 
         if IS_SAVE:
