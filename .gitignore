@@ -102,3 +102,4 @@ first-contact-with-tensorflow/MNIST_data
 2018-2-seminar/saved_model
 2018-2-seminar/in_progress
 *.*~
+*.csv#

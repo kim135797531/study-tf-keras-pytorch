@@ -30,8 +30,8 @@ class IntrinsicMotivation(TorchSerializable):
         # 0 = 내적 동기 0% (순수 외적 동기)
         # 0.5 = 내적/외적 반반 (균등 분배)
         # 1 = 내적 동기 100% (순수 내적 동기)
-        self.intrinsic_reward_ratio = 0.9
-        self.intrinsic_reward_ratio_annealing = True
+        self.intrinsic_reward_ratio = 0.7
+        self.intrinsic_reward_ratio_annealing = False
         self.intrinsic_reward_ratio_decay = 0.999
         self.intrinsic_reward_ratio_min = 0.001
 

@@ -83,7 +83,7 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '17_im_(LPM_0.9)(1step)(region250)(annealing99.9%,min0.001)'
+    VIZ_ENV_NAME = '14'
 
     # 2. 저장 관련 설정
     VERSION = 1
