@@ -283,15 +283,22 @@ class RegionManager(u.TorchSerializable):
 
     def find_region(self, sars, region=None):
         # TODO: 재귀에서 루프로 바꾸기 (트리가 엄청 깊음)
-        region = region if region else self.region_head
-        if region.is_leaf():
-            return region
+        current = region if region else self.region_head
+        # s = []
+        done = False
 
-        first_dim, second_dim = region.global_dim_to_local_dim(region.cutting_dim)
-        if region.cutting_val < sars[first_dim][0][second_dim]:
-            return self.find_region(sars, region.left_child)
-        else:
-            return self.find_region(sars, region.right_child)
+        while not done:
+            if current.is_leaf():
+                break
+
+            first_dim, second_dim = current.global_dim_to_local_dim(current.cutting_dim)
+            if current.cutting_val < sars[first_dim][0][second_dim]:
+                current = current.left_child
+            else:
+                current = current.right_child
+
+        return current
+
 
     """
     def em_algorithm(self, region, dim):
@@ -378,5 +385,5 @@ if __name__ == "__main__":
         region_manager.add(deepcopy(sample_1))
         region_manager.add(deepcopy(sample_2))
 
-    region = region_manager.find_region(sample_2)
-    print(region.expert(torch.unsqueeze(state, dim=0), torch.unsqueeze(action, dim=0)))
+    region2 = region_manager.find_region(sample_2)
+    print(region2.expert(torch.unsqueeze(state, dim=0), torch.unsqueeze(action, dim=0)))
