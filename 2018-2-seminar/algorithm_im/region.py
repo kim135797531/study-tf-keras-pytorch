@@ -2,6 +2,7 @@
 from collections import deque
 from collections import namedtuple
 from copy import deepcopy
+from itertools import compress
 
 import numpy as np
 import torch
@@ -52,21 +53,28 @@ class Region(u.TorchSerializable):
         self.state_size = state_size
         self.action_size = action_size
 
+        # 전체 차원은 현재 상태 차원 크기 + 액션 차원 크기 + 다음 상태 차원 크기
+        self.global_max_dim = self.state_size + self.action_size + self.state_size
+
         self._is_leaf = True
         self.cutting_dim = None
         self.cutting_val = None
         self.left_child = None
         self.right_child = None
 
-        self.samples = list()
+        self.exemplars = list()
+        self.exemplar_structure = namedtuple('Exemplar', ('state', 'action', 'next_state'))
+
+        self.transposed_exemplars = list()
+        for i in range(self.global_max_dim):
+            self.transposed_exemplars.append(list())
+
         self.expert = Expert(self.state_size, self.action_size).to(self.device)
         self.expert_optimizer = optim.Adam(
             self.expert.parameters(),
             lr=self.learning_rate_expert
         )
         self.loss_queue = deque(maxlen=self.past_time + self.time_window)
-
-        self.exemplar_structure = namedtuple('Exemplar', ('state', 'action', 'next_state'))
 
     def _set_hyper_parameters(self):
         # TODO: 저장, 로드
@@ -100,8 +108,7 @@ class Region(u.TorchSerializable):
         self.cutting_val = cutting_val
         self.left_child = left_child
         self.right_child = right_child
-        # TODO: 삭제하면 자식 노드에 영향 X?
-        del self.samples
+        del self.exemplars
         del self.expert
         del self.expert_optimizer
         del self.loss_queue
@@ -116,45 +123,63 @@ class Region(u.TorchSerializable):
         # 전체 차원 7 => 로컬 차원 0, 7
         # 전체 차원 8 => 로컬 차원 1, 0
         # 전체 차원 9 => 로컬 차원 1, 1
-        first = 0
-        if global_dim >= self.state_size:
-            first += 1
-            global_dim -= self.state_size
-        second = global_dim
-        return first, second
+        first_dim, second_dim = -1, -1
 
-    def _train_model(self, train_repeat=1):
-        samples = self.exemplar_structure(*zip(*self.samples))
-        s = torch.cat(samples.state).to(self.device)
-        a = torch.cat(samples.action).to(self.device)
-        next_s = torch.cat(samples.next_state).to(self.device)
+        if global_dim < self.state_size:
+            first_dim, second_dim = 0, global_dim
+        elif self.state_size <= global_dim < self.state_size + self.action_size:
+            first_dim, second_dim = 1, global_dim - self.state_size
+        elif self.state_size + self.action_size <= global_dim < self.global_max_dim:
+            first_dim, second_dim = 2, global_dim - self.state_size - self.action_size
 
-        for i in range(0, train_repeat):
-            predicted_next_s = self.expert(s, a)
+        if first_dim == -1 or second_dim == -1:
+            LookupError("region dim 범위 벗어남")
 
-            # TODO: 상태 예측기도 DDPG 처럼 타겟망까지 만들어서 예측? 아니면 단순한 순차 선형 신경망?
-            # state_prediction_error = nn.L1Loss(reduction='none').to(self.device)
-            # state_prediction_error = state_prediction_error(predicted_next_s.detach(), next_s.detach())
-            # state_prediction_error = torch.sum(state_prediction_error, dim=1).to(self.device)
+        return first_dim, second_dim
 
-            # 상태 예측기 최적화
-            self.expert_optimizer.zero_grad()
-            state_predictor_loss = nn.MSELoss().to(self.device)  # 배치니까 mean 해줘야 할 듯?
-            state_predictor_loss = state_predictor_loss(predicted_next_s, next_s)
-            state_predictor_loss.backward()
-            self.expert_optimizer.step()
+    def _train_model(self, exemplar):
+        if isinstance(exemplar, list):
+            exemplars = self.exemplar_structure(*zip(*exemplar))
+            s = torch.cat(exemplars.state).to(self.device)
+            a = torch.cat(exemplars.action).to(self.device)
+            next_s = torch.cat(exemplars.next_state).to(self.device)
+        else:
+            s = exemplar.state
+            a = exemplar.action
+            next_s = exemplar.next_state
+
+        predicted_next_s = self.expert(s, a)
+
+        # 상태 예측기 최적화
+        # TODO: 샘플이 최대 250개라면 뉴럴넷보단 SVM이나 베이지안이 낫지 않을까
+        self.expert_optimizer.zero_grad()
+        state_predictor_loss = nn.MSELoss().to(self.device)  # 배치니까 mean 해줘야 할 듯?
+        state_predictor_loss = state_predictor_loss(predicted_next_s, next_s)
+        state_predictor_loss.backward()
+        self.expert_optimizer.step()
 
         self.loss_queue.append(state_predictor_loss.item())
 
-    def add(self, sample):
-        self.samples.append(sample)
+    def _add_to_transposed_exemplars(self, exemplar):
+        # TODO: 제발 속도 개선 하면서 속도를 더 느려지게 하지 말자 ㅠ
+        for i in range(self.global_max_dim):
+            first_dim, second_dim = self.global_dim_to_local_dim(i)
+            self.transposed_exemplars[i].append(exemplar[first_dim][0][second_dim])
 
-        # TODO:
-        # if len(self.samples) > 1:
-        self._train_model()
+    def add(self, exemplar):
+        self.exemplars.append(exemplar)
+        self._add_to_transposed_exemplars(exemplar)
+        self._train_model(exemplar)
+
+    def add_all(self, exemplars):
+        self.exemplars.extend(exemplars)
+        for exemplar in exemplars:
+            self._add_to_transposed_exemplars(exemplar)
+        self._train_model(exemplars)
 
     def get_past_error_mean(self):
         if len(self.loss_queue) < self.loss_queue.maxlen:
+            # 아직 충분한 샘플이 모이지 않았을 경우
             return 1
 
         past_error_sum = 0
@@ -165,6 +190,7 @@ class Region(u.TorchSerializable):
 
     def get_current_error_mean(self):
         if len(self.loss_queue) < self.loss_queue.maxlen:
+            # 아직 충분한 샘플이 모이지 않았을 경우
             return 1
 
         current_error_sum = 0
@@ -180,19 +206,12 @@ class RegionManager(u.TorchSerializable):
         self._set_hyper_parameters()
         self.device = TrainerMetadata().device
         self.region_head = Region(state_size, action_size)
-        self.exemplar_structure = namedtuple('Exemplar', ('state', 'action', 'next_state'))
+        self.exemplar_structure = self.region_head.exemplar_structure
 
     def _set_hyper_parameters(self):
-        # TODO: 논문의 C1 상수 = 250
         self.region_maxlen = 250
         # 분산 계산할 때 각 리전에 최소 2개 이상씩은 있어야 함
         assert(self.region_maxlen >= 4)
-
-        # TODO: 최적화 전이라서 각 dim별로 모든 split을 다 검사하는 것은 너무 느림
-        # ex) 한 dim의 자료가 100개라면
-        # 기존: 2/98, 3/97, 4/96, ... 전부 검사
-        # 지금: 2/98, 12/88, 22/84, ... 이렇게 검사
-        self.variance_finder_step = 10
 
     def state_dict_impl(self):
         # TODO: 저장, 로드
@@ -202,83 +221,68 @@ class RegionManager(u.TorchSerializable):
         # TODO: 저장, 로드
         pass
 
-    def add(self, sample):
-        region = self.find_region(sample)
-        # region = self.region_head
-        region.add(sample)
+    def add(self, exemplar):
+        region = self.find_region(exemplar)
+        region.add(exemplar)
 
         if self.met_criterion_1(region):
             self.split_region(region)
 
     def met_criterion_1(self, region):
-        return True if len(region.samples) > self.region_maxlen else False
+        return len(region.exemplars) > self.region_maxlen
 
     def split_region(self, region):
-        min_weighted_var, min_index, min_cutting_dim = None, None, None
-
+        min_weighted_var, min_cutting_dim, min_left_indices, min_right_indices = None, None, None, None
         n_dim = region.state_size + region.action_size  # SM(t)
+
+        next_state_batch = self.exemplar_structure(*zip(*region.exemplars)).next_state
+        next_state_tensor = torch.cat(next_state_batch).to(self.device)
+
         for dim in range(n_dim):
-            # FIXME: 여기 100% 동작 안 할 듯
             # TODO: 여러 dim에 대해 동시에 돌리기
-            weighted_var, index = self.find_minimum_variance(region, dim)
-            # weighted_var = 0
-            # index = 5
+            weighted_var, left_indices, right_indices = self.find_minimum_variance(region, next_state_tensor, dim)
+
             if min_weighted_var is None or min_weighted_var > weighted_var:
-                min_weighted_var = weighted_var
-                min_index = index
-                min_cutting_dim = dim
+                min_weighted_var, min_cutting_dim, min_left_indices, min_right_indices = \
+                    weighted_var, dim, left_indices, right_indices
 
-        first_dim, second_dim = region.global_dim_to_local_dim(min_cutting_dim)
-        # if first_dim == 0:
-        #     print("상태 {}, 최저 분산 {:.4f}".format(second_dim, min_weighted_var.item()))
-        # else:
-        #     print("행동 {}, 최저 분산 {:.4f}".format(second_dim, min_weighted_var.item()))
-        # TODO: 나중에 find_minimum_variance에서 Region 만들어서 넘겨주면 삭제
-        region.samples.sort(key=lambda elem: elem[first_dim][0][second_dim])
         min_left_child = Region(region.state_size, region.action_size)
-        min_left_child.samples = region.samples[:min_index]
-        # FIXME: 10번 정도 미리 돌려줄까?
-        PRE_TRAIN = 1
-        min_left_child._train_model(train_repeat=PRE_TRAIN)
-        min_right_child = Region(region.state_size, region.action_size)
-        min_right_child.samples = region.samples[min_index:]
-        min_right_child._train_model(train_repeat=PRE_TRAIN)
+        min_left_child.add_all(list(compress(region.exemplars, min_left_indices)))
 
-        min_cutting_val = min_left_child.samples[-1][first_dim][0][second_dim]
+        min_right_child = Region(region.state_size, region.action_size)
+        min_right_child.add_all(list(compress(region.exemplars, min_right_indices)))
+
+        # TODO: 중간 dimension 하드코딩.. [first_dim]!!![0]!!![second_dim]
+        first_dim, second_dim = region.global_dim_to_local_dim(min_cutting_dim)
+        min_cutting_val = min_left_child.exemplars[-1][first_dim][0][second_dim]
 
         region.set_as_non_leaf(min_cutting_dim, min_cutting_val, min_left_child, min_right_child)
 
-        # self.debug_regions.extend([min_left_child, min_right_child])
-        # TrainerMetadata().log(value=len(self.debug_regions), indicator='total_sample_capacity')
+    def find_minimum_variance(self, region, next_state_tensor, dim):
+        min_weighted_var, min_left_indices, min_right_indices = None, None, None
 
-    def find_minimum_variance(self, region, dim):
-        first_dim, second_dim = region.global_dim_to_local_dim(dim)
-        # TODO: 이 구문 때문에 반드시 tuple이 state, action, next_state 순으로 저장되어 있어야 함
-        # TODO: 중간 dimension 하드코딩.. [first_dim]!!![0]!!![second_dim]
-        region.samples.sort(key=lambda elem: elem[first_dim][0][second_dim])
+        # region.exemplars 의 현재 차원에 대해 정렬 순서의 index를 가져오기 [3, 20, 13, 1, 4, ... ] = 무조건 251개
+        current_dim_vals = region.transposed_exemplars[dim]
+        current_dim_vals = torch.stack(current_dim_vals)
+        sorted_dim_vals, indices = torch.sort(current_dim_vals)
 
-        samples = self.exemplar_structure(*zip(*region.samples))
-        next_s = samples.next_state
-
-        min_weighted_var, min_index = None, None
-        # 위에서 정렬했기 때문에 오름차순이 보장되어 있음
-        # TODO: 분산이 n > 2 에서만 동작하는데 2개 이상부터 잘라도 괜찮나?
-        for i in range(2, len(next_s) - 1, self.variance_finder_step):
-            left_next_s, right_next_s = torch.stack(next_s[:i]), torch.stack(next_s[i:])
-            # TODO: 분산 계산.. 맞는지 모르겠다
-            weighted_var = \
-                len(left_next_s) * left_next_s.var() + \
-                len(right_next_s) * right_next_s.var()
+        # 인덱스 배열에서 현재 나누는 기준까지의 index만 가져오기 [1, 0, 0, 1, 1, ... ] = 무조건 251개
+        for cutting_index in range(2, len(indices) - 1):
+            left_indices = (indices < cutting_index)
+            right_indices = left_indices == 0
+            # 해당 인덱스를 갖는 자료들끼리 복사없이 비교?
+            weighted_var = cutting_index * next_state_tensor[left_indices].var() + \
+                           (len(indices) - cutting_index) * next_state_tensor[right_indices].var()
 
             if min_weighted_var is None or min_weighted_var > weighted_var:
                 min_weighted_var = weighted_var
-                min_index = i
+                min_left_indices = left_indices
+                min_right_indices = right_indices
 
-        # TODO: 현재는 디버깅 쉽게 하기 위해 인덱스만 반환해서 나중에 정렬 한 번 더 하지만
-        # TODO: 추후 Region 객체를 만들어서 반환해야 함
-        return min_weighted_var, min_index
+        return min_weighted_var, min_left_indices, min_right_indices
 
     def find_region(self, sars, region=None):
+        # TODO: 재귀에서 루프로 바꾸기 (트리가 엄청 깊음)
         region = region if region else self.region_head
         if region.is_leaf():
             return region
@@ -304,11 +308,11 @@ class RegionManager(u.TorchSerializable):
         :return:
 
          내 아까운 코드들 ㅠ
-        indices_X = region.samples.transpose(dim0=0, dim=1)[dim]
+        indices_X = region.exemplars.transpose(dim0=0, dim=1)[dim]
 
         n_clusters = 2
 
-        samples = self.exemplar_structure(*zip(*region.samples))
+        samples = self.exemplar_structure(*zip(*region.exemplars))
 
         # TODO: 이거 튜플로 묶으면 다시 GPU에서 CPU로 오나?
         # 텐서의 집합에서 고차원 텐서로
@@ -329,7 +333,7 @@ class RegionManager(u.TorchSerializable):
 
         while True:
             # E: 세로로 자르기 = 그냥 X랑 가까운 거
-            # data1 = region.samples
+            # data1 = region.exemplars
             # data2 = current_coord
             # A = 250, 1, 1 (개수, 1개니깐, SM(t)[dim]=1)
             # B = 1, 2, 1 (개수, 클러스터 2개, SM(t)[dim]=1)
