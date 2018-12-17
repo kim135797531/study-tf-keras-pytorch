@@ -86,15 +86,8 @@ class PredictiveSurpriseMotivation(IntrinsicMotivation):
         # 메타망 Adam 학습률
         self.learning_rate_meta_predictor = 0.001
 
-        # TODO: 적절한 C는 내가 찾아야 함
+        # TODO: 적절한 C는 내가 찾아야 함 (일단 알고리즘 밖에서 전체 decay 중)
         self.intrinsic_scale_1 = 1
-
-        # TODO: 원 논문에는 없는, C의 지수적 감소식 구현
-        # -> 처음에는 내발적 동기 값을 크게 하다가 나중에는 0으로 하기
-        # -> 반영 비율 자체는 1:1로 유지한다
-        self.intrinsic_scale_1_annealing = False
-        self.intrinsic_scale_1_decay = 0.999
-        self.intrinsic_scale_1_min = 0.01
 
     def state_dict_impl(self):
         todo = super().state_dict_impl()
@@ -158,10 +151,5 @@ class PredictiveSurpriseMotivation(IntrinsicMotivation):
         # TODO: 제일 처음 Expert망이 조금 학습된 다음에 내발적 동기 보상 리턴하기?
         if self.delayed_start and (TrainerMetadata().global_step < i_episode + self.intrinsic_reward_start):
             return 0
-
-        # TODO: 매 에피소드별로 vs 매 스텝별로 decay
-        if self.intrinsic_scale_1_annealing and step == 0:
-            if self.intrinsic_scale_1 > self.intrinsic_scale_1_min:
-                self.intrinsic_scale_1 *= self.intrinsic_scale_1_decay
 
         return intrinsic_reward_batch

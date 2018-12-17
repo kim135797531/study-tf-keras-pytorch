@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import utils_kdm as u
 from algorithm_im.im_base import IntrinsicMotivation
 from algorithm_im.region import RegionManager
+from utils_kdm.trainer_metadata import TrainerMetadata
 
 
 class StatePredictor(nn.Module):
@@ -35,8 +36,7 @@ class StatePredictor(nn.Module):
         return self.head(x)
 
 
-class LearningProgressMotivationOudeyer(IntrinsicMotivation):
-    # Oudeyer et al. (2007)
+class PredictiveFamiliarityMotivation(IntrinsicMotivation):
 
     def __init__(self, state_size, action_size):
         super().__init__(state_size, action_size)
@@ -45,6 +45,9 @@ class LearningProgressMotivationOudeyer(IntrinsicMotivation):
 
     def _set_hyper_parameters(self):
         super()._set_hyper_parameters()
+
+        # TODO: 적절한 C는 내가 찾아야 함 (일단 알고리즘 밖에서 전체 decay 중)
+        self.intrinsic_scale_1 = 0.001
 
     def state_dict_impl(self):
         # TODO: 저장 불러오기
@@ -68,12 +71,15 @@ class LearningProgressMotivationOudeyer(IntrinsicMotivation):
         self.region_manager.add(examplar)
 
         region = self.region_manager.find_region(examplar)
-        past_error = region.get_past_error_mean()
         current_error = region.get_current_error_mean()
-        intrinsic_reward = past_error - current_error
+        intrinsic_reward = self.intrinsic_scale_1 / current_error
 
-        # TODO: 환경 평소 보상 (1) 정도로 clip 해줄까?
-        # intrinsic_reward_batch = torch.clamp(intrinsic_reward_batch, min=-2, max=2)
-        # self.viz.draw_line(y=torch.mean(intrinsic_reward_batch), interval=1000, name="intrinsic_reward_batch")
+        intrinsic_reward = u.t_float32(intrinsic_reward)
+        # TrainerMetadata().log(value=intrinsic_reward, indicator='intrinsic_reward',
+        # variable='raw', interval=1, show_only_last=False, compute_maxmin=False)
+        intrinsic_reward = torch.clamp(intrinsic_reward, min=-2, max=2)
+        # TrainerMetadata().log(value=intrinsic_reward, indicator='intrinsic_reward',
+        # variable='clamp', interval=1, show_only_last=False, compute_maxmin=False)
 
+        intrinsic_reward = intrinsic_reward.item()
         return intrinsic_reward

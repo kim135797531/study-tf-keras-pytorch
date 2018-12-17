@@ -109,6 +109,7 @@ class Region(u.TorchSerializable):
         self.left_child = left_child
         self.right_child = right_child
         del self.exemplars
+        del self.transposed_exemplars
         del self.expert
         del self.expert_optimizer
         del self.loss_queue

@@ -183,22 +183,7 @@ class DDPG(u.TorchSerializable):
         return np.clip(action, a_min=self.action_low, a_max=self.action_high)
         # return action
 
-    def train_model(self, sars, done):
-        # 메모리에서 일정 크기만큼 기억을 불러온다
-        # 그 후 기억을 모아 각 변수별로 모은다. (즉, 전치행렬)
-        # TODO: random과 zip func 글카에서 하기
-        transitions = self.memory.sample(self.batch_size)
-        # SARS = State, Action, Reward, next State
-        sars_batch = self.transition_structure(*zip(*transitions))
-
-        # TODO: 이거 튜플로 묶으면 다시 GPU에서 CPU로 오나?
-        # 텐서의 집합에서 고차원 텐서로
-        # tuple(tensor, ...) -> tensor()
-        s_batch = torch.cat(sars_batch.state).to(self.device)
-        a_batch = torch.cat(sars_batch.action).to(self.device)
-        r_batch = torch.cat(sars_batch.reward).to(self.device)
-        next_s_batch = torch.cat(sars_batch.next_state).to(self.device)
-
+    def get_critic_loss(self, s_batch, a_batch, r_batch, next_s_batch):
         # <평가망(critic) 최적화>
         # (무엇을, 어디서, 어떻게, 왜)
         # 각각의 기억에 대해, 타겟 정책망에, 다음 상태를 넣어서, 다음 타겟 액션을 구한다.
@@ -214,15 +199,12 @@ class DDPG(u.TorchSerializable):
         expected_rewards = r_batch.unsqueeze(dim=1) + self.discount_factor * target_rewards
         predicted_rewards = self.critic(s_batch, a_batch)
 
-        # 예측한 보상과 향후 기대하는 보상을 MSE 비교 후 업데이트
-        #   ||r' - [r + (r+1)']|| = 0
-        # ∴ ||r' - (r+1)'      || = r  (현재 Q함수와 다음 Q함수 차이가 딱 실제 보상이 되도록 학습)
-        self.critic_optimizer.zero_grad()
         critic_loss = nn.MSELoss().to(self.device)
         critic_loss = critic_loss(expected_rewards, predicted_rewards)
-        critic_loss.backward()
-        self.critic_optimizer.step()
 
+        return critic_loss
+
+    def get_actor_loss(self, s_batch):
         # <정책망(actor) 최적화>
         # 무엇을? = 현재 상태와 예측한 액션을 이용해서, Q함수 예측값을 최소화 하자 (0 만드는게 아니다 음수로 쭉쭉 가즈아)
         # 어떻게? = 최소가 나오게 하는 액션을 예측하게 만들어서 (액션망 가중치(+편향)로 그라디언트)
@@ -244,8 +226,6 @@ class DDPG(u.TorchSerializable):
         #                   조건: 상태
         #                   식:   정책망(상태) (정책망 가중치=θµ) 일 때, 정책망 가중치로 그라디언트 구하기
         #     식:   평가망(상태, 액션) (평가망 가중치=θ) 일 때, 액션으로 그라디언트 구하기
-        self.actor_optimizer.zero_grad()
-
         # µ(s|θµ)
         predicted_actions = self.actor(s_batch)
         # Q(s,a|θ)
@@ -257,6 +237,34 @@ class DDPG(u.TorchSerializable):
         # actor_loss = -1*torch.sum(q_output).to(self.device)
         actor_loss = -1 * torch.mean(q_output).to(self.device)
 
+        return actor_loss
+
+    def train_model(self, sars, done):
+        # 메모리에서 일정 크기만큼 기억을 불러온다
+        # 그 후 기억을 모아 각 변수별로 모은다. (즉, 전치행렬)
+        # TODO: random과 zip func 글카에서 하기
+        transitions = self.memory.sample(self.batch_size)
+        # SARS = State, Action, Reward, next State
+        sars_batch = self.transition_structure(*zip(*transitions))
+
+        # TODO: 이거 튜플로 묶으면 다시 GPU에서 CPU로 오나?
+        # 텐서의 집합에서 고차원 텐서로
+        # tuple(tensor, ...) -> tensor()
+        s_batch = torch.cat(sars_batch.state).to(self.device)
+        a_batch = torch.cat(sars_batch.action).to(self.device)
+        r_batch = torch.cat(sars_batch.reward).to(self.device)
+        next_s_batch = torch.cat(sars_batch.next_state).to(self.device)
+
+        self.critic_optimizer.zero_grad()
+        critic_loss = self.get_critic_loss(s_batch, a_batch, r_batch, next_s_batch)
+        # 예측한 보상과 향후 기대하는 보상을 MSE 비교 후 업데이트
+        #   ||r' - [r + (r+1)']|| = 0
+        # ∴ ||r' - (r+1)'      || = r  (현재 Q함수와 다음 Q함수 차이가 딱 실제 보상이 되도록 학습)
+        critic_loss.backward()
+        self.critic_optimizer.step()
+
+        self.actor_optimizer.zero_grad()
+        actor_loss = self.get_actor_loss(s_batch)
         # 정책망의 예측 보상을 정책 그라디언트로 업데이트
         # ∇θµ[Q(s,a|θ)] ∇θµ[µ(s|θµ)]
         actor_loss.backward()

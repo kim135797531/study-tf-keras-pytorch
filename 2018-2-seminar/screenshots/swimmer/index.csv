@@ -1,24 +1,27 @@
-,,,,,,,,,,,,,똑같으면 ↑로 표시,,,,,,,,,,
-,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,똑같으면 ↑로 표시,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,
 ID,File Name,Date,Max Score,Episode,,RL Algorithm,Hidden Layer,Learning rate,Batch Size,Memory Len,Train start,,Intrinsic Motivation,"Int/Ext
 Reward ratio","IM
+C1 value","IM
 Annealing decay","IM
-Annealing minimum","LPM
-Learning Late","LPM
+Annealing minimum","LPM/FM
+Learning Late","LPM/FM
 Region Size","LPM Region
 Variance Search Step",IM 적용 주기,,Youtube,비고
 1,swimmer_ddpg_im.py,2018-12-05,100,401,,DDPG,"400, 300","Actor: 0.0001
-Critic 0.001",128,750000,2000,,x,x,x,x,x,x,x,1,,x,
-2,swimmer_ddpg_im.py,2018-12-07,40,8001,,↑,↑,↑,↑,↑,↑,,NM(Predictive Novelty Motivation),0.5 / 0.5,↑,↑,x,x,x,↑,,https://youtu.be/y6jKqnLH5ZY,
-3,swimmer_ddpg_im.py,2018-12-10,180?,2815,,↑,↑,↑,↑,↑,↑,,↑,0.2 / 0.8,↑,↑,x,x,x,↑,,https://youtu.be/epAH_50ZC5g↑t=7417,
-4,swimmer_ddpg_im.py,2018-12-10,200?,2808,,↑,↑,↑,↑,↑,↑,,↑,0.1 / 0.9,↑,↑,x,x,x,↑,,https://youtu.be/DZ-AFXpovXw,
-5,swimmer_ddpg_im.py,2018-12-11,120,8101,,↑,↑,↑,↑,↑,↑,,↑,0.5 / 0.5,0.99,0.001,x,x,x,↑,,x,
-6,swimmer_ddpg_im.py,2018-12-11,120,6497,,↑,↑,↑,↑,↑,↑,,↑,↑,↑,0.01,x,x,x,↑,,x,
-7,swimmer_ddpg_im.py,2018-12-11,60,2407,,↑,↑,↑,↑,↑,↑,,SM(Predictive Surprise Motivation),↑,x,x,x,x,x,↑,,https://youtu.be/XWy6hifodwQ ,
-8,swimmer_ddpg_im.py,2018-12-14,130,16081,,↑,↑,↑,↑,↑,↑,,↑,↑,0.99,0.001,x,x,x,↑,,https://youtu.be/XWy6hifodwQ ,
-9,swimmer_ddpg_im.py,2018-12-14,120,13736,,↑,↑,↑,↑,↑,↑,,↑,↑,0.999,0.01,x,x,x,↑,,x,
-10,ddpg_runner.py,2018-12-15,120,1500?,,↑,↑,↑,↑,↑,↑,,LPM(Learning Progress Motivation),0.5 / 0.5,↑,↑,0.001,250,1,10,,x,
-11,ddpg_runner.py,2018-12-16,120,1500?,,↑,↑,↑,↑,↑,↑,,↑,0.9 → 0.001 / 0.1 → 0.999,0.999,0.001,↑,↑,↑,↑,,,
-12,ddpg_runner.py,2018-12-16,120,1500?,,↑,↑,↑,↑,↑,↑,,↑,↑,↑,↑,↑,1000,↑,↑,,https://youtu.be/ZPjRWQzDnD4,리전 크기가 크니 처음엔 빠른데 나중 가면 매번 리전 1000개 검색하느라 느려짐
-13,ddpg_runner.py,2018-12-17,130,1487,,↑,↑,↑,↑,↑,↑,,↑,↑,↑,↑,0.01,250,10,1,,https://youtu.be/RZPetr7ZFQc,초반에 한 번 150까지 갔었음
-14,ddpg_runner.py,2018-12-17,100,1110,,↑,↑,↑,↑,↑,↑,,↑,0.7 / 0.3,x,x,↑,↑,↑,↑,,https://youtu.be/IqVoBxaird4,리전 트리 순회하다가 재귀호출 제한 걸림 (깊이 1000)
+Critic 0.001",128,750000,2000,,x,x,x,x,x,x,x,x,1,,x,
+2,swimmer_ddpg_im.py,2018-12-07,40,8001,,↑,↑,↑,↑,↑,↑,,NM(Predictive Novelty Motivation),0.5 / 0.5,1,↑,↑,x,x,x,↑,,https://youtu.be/y6jKqnLH5ZY,
+3,swimmer_ddpg_im.py,2018-12-10,180?,2815,,↑,↑,↑,↑,↑,↑,,↑,0.2 / 0.8,↑,↑,↑,x,x,x,↑,,https://youtu.be/epAH_50ZC5g↑t=7417,
+4,swimmer_ddpg_im.py,2018-12-10,200?,2808,,↑,↑,↑,↑,↑,↑,,↑,0.1 / 0.9,↑,↑,↑,x,x,x,↑,,https://youtu.be/DZ-AFXpovXw,
+5,swimmer_ddpg_im.py,2018-12-11,120,8101,,↑,↑,↑,↑,↑,↑,,↑,0.5 / 0.5,↑,0.99,0.001,x,x,x,↑,,x,
+6,swimmer_ddpg_im.py,2018-12-11,120,6497,,↑,↑,↑,↑,↑,↑,,↑,↑,↑,↑,0.01,x,x,x,↑,,x,
+7,swimmer_ddpg_im.py,2018-12-11,60,2407,,↑,↑,↑,↑,↑,↑,,SM(Predictive Surprise Motivation),↑,↑,x,x,x,x,x,↑,,https://youtu.be/XWy6hifodwQ ,
+8,swimmer_ddpg_im.py,2018-12-14,130,16081,,↑,↑,↑,↑,↑,↑,,↑,↑,↑,0.99,0.001,x,x,x,↑,,https://youtu.be/XWy6hifodwQ ,
+9,swimmer_ddpg_im.py,2018-12-14,120,13736,,↑,↑,↑,↑,↑,↑,,↑,↑,↑,0.999,0.01,x,x,x,↑,,x,
+10,ddpg_runner.py,2018-12-15,120,1500?,,↑,↑,↑,↑,↑,↑,,LPM(Learning Progress Motivation),0.5 / 0.5,↑,↑,↑,0.001,250,1,10,,x,
+11,ddpg_runner.py,2018-12-16,120,1500?,,↑,↑,↑,↑,↑,↑,,↑,0.9 → 0.001 / 0.1 → 0.999,↑,0.999,0.001,↑,↑,↑,↑,,,
+12,ddpg_runner.py,2018-12-16,120,1500?,,↑,↑,↑,↑,↑,↑,,↑,↑,↑,↑,↑,↑,1000,↑,↑,,https://youtu.be/ZPjRWQzDnD4,리전 크기가 크니 처음엔 빠른데 나중 가면 매번 리전 1000개 검색하느라 느려짐
+13,ddpg_runner.py,2018-12-17,130,1487,,↑,↑,↑,↑,↑,↑,,↑,↑,↑,↑,↑,0.01,250,10,1,,https://youtu.be/RZPetr7ZFQc,초반에 한 번 150까지 갔었음
+14,ddpg_runner.py,2018-12-17,100,1110,,↑,↑,↑,↑,↑,↑,,↑,0.7 / 0.3,↑,x,x,↑,↑,↑,↑,,https://youtu.be/IqVoBxaird4,리전 트리 순회하다가 재귀호출 제한 걸림 (깊이 1000)
+15,ddpg_runner.py,2018-12-18,130,1531,,↑,↑,↑,↑,↑,↑,,↑,↑,↑,↑,↑,↑,↑,1,↑,,https://youtu.be/6YncRZt_RtQ,속도 개선 후 다시 실행
+16,ddpg_runner.py,,,,,↑,↑,↑,↑,↑,↑,,FM(Predictive Familiarity Motivation),↑,0.001,↑,↑,↑,↑,↑,↑,,,
