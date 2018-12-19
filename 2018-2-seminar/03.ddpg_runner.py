@@ -30,6 +30,8 @@ class RLAgent(u.TorchSerializable):
 
         self.algorithm_im, self.algorithm_rl = algorithm_im, algorithm_rl
         self.use_intrinsic = use_intrinsic
+        if self.use_intrinsic is False:
+            self.algorithm_im.intrinsic_reward_ratio = 0
 
     def _set_hyper_parameters(self):
         pass
@@ -81,7 +83,7 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '17_'
+    VIZ_ENV_NAME = '19_'
 
     # 2. 저장 관련 설정
     VERSION = 1
@@ -116,8 +118,8 @@ if __name__ == "__main__":
     # FM = 각 '지역'별로 오차가 작을수록 보상 높음
     # algorithm_im = LearningNoveltyMotivation(state_size, action_size)
     # algorithm_im = LearningProgressMotivation(state_size, action_size)
-    # algorithm_im = PredictiveSurpriseMotivation(state_size, action_size)
-    algorithm_im = PredictiveFamiliarityMotivation(state_size, action_size)
+    algorithm_im = PredictiveSurpriseMotivation(state_size, action_size)
+    # algorithm_im = PredictiveFamiliarityMotivation(state_size, action_size)
 
     algorithm_rl = DDPG(state_size, action_size, action_range)
     agent = RLAgent(algorithm_im, algorithm_rl,

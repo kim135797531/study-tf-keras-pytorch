@@ -87,7 +87,7 @@ class PredictiveSurpriseMotivation(IntrinsicMotivation):
         self.learning_rate_meta_predictor = 0.001
 
         # TODO: 적절한 C는 내가 찾아야 함 (일단 알고리즘 밖에서 전체 decay 중)
-        self.intrinsic_scale_1 = 1
+        self.intrinsic_scale_1 = 1e-4
 
     def state_dict_impl(self):
         todo = super().state_dict_impl()
@@ -107,24 +107,23 @@ class PredictiveSurpriseMotivation(IntrinsicMotivation):
         # noinspection PyAttributeOutsideInit
         self.intrinsic_scale_1 = var_state['intrinsic_scale_1']
 
-    def _train_model(self, state_batch, action_batch, next_state_batch):
+    def _train_model(self, s, a, n_s):
         # 상태 예측기 #
-        predicted_state_batch = self.expert(state_batch, action_batch)
+        predicted_state_batch = self.expert(s, a)
 
-        # TODO: 상태 예측기도 DDPG 처럼 타겟망까지 만들어서 예측? 아니면 단순한 순차 선형 신경망?
         state_prediction_error = nn.L1Loss(reduction='none').to(self.device)
-        state_prediction_error = state_prediction_error(predicted_state_batch.detach(), next_state_batch.detach())
+        state_prediction_error = state_prediction_error(predicted_state_batch.detach(), n_s.detach())
         state_prediction_error = torch.sum(state_prediction_error, dim=1).to(self.device)
 
         # 상태 예측기 최적화
         self.expert_optimizer.zero_grad()
         state_predictor_loss = nn.MSELoss().to(self.device)  # 배치니까 mean 해줘야 할 듯?
-        state_predictor_loss = state_predictor_loss(predicted_state_batch, next_state_batch)
+        state_predictor_loss = state_predictor_loss(predicted_state_batch, n_s)
         state_predictor_loss.backward()
         self.expert_optimizer.step()
 
         # 메타망 #
-        predicted_state_predictor_loss = self.meta_predictor(state_batch, action_batch)
+        predicted_state_predictor_loss = self.meta_predictor(s, a)
 
         meta_prediction_error = nn.L1Loss(reduction='none').to(self.device)
         meta_prediction_error = meta_prediction_error(predicted_state_predictor_loss.squeeze().detach(), state_prediction_error.detach())
@@ -139,17 +138,25 @@ class PredictiveSurpriseMotivation(IntrinsicMotivation):
 
         return state_prediction_error, meta_prediction_error
 
-    def intrinsic_motivation_impl(self, i_episode, step, batch_tuple, current_sars, current_done):
+    def intrinsic_motivation_impl(self, i_episode, step, current_sars, current_done):
         # Predictive Surprise Motivation (SM)
-        transitions, state_batch, action_batch, reward_batch, next_state_batch = batch_tuple
-        state_prediction_error, meta_prediction_error = self._train_model(state_batch, action_batch, next_state_batch)
-        intrinsic_reward_batch = self.intrinsic_scale_1 * (state_prediction_error / meta_prediction_error)
+        current_state, current_action, current_reward, current_next_state = current_sars
+
+        state_prediction_error, meta_prediction_error = self._train_model(
+            u.t_float32(current_state),
+            u.t_float32(current_action),
+            u.t_float32(current_next_state)
+        )
+        intrinsic_reward = self.intrinsic_scale_1 * (state_prediction_error / meta_prediction_error)
 
         # TODO: 환경 평소 보상 (1) 정도로 clip 해줄까?
-        # intrinsic_reward_batch = torch.clamp(intrinsic_reward_batch, min=-2, max=2)
+        # intrinsic_reward = torch.clamp(intrinsic_reward, min=-2, max=2)
 
         # TODO: 제일 처음 Expert망이 조금 학습된 다음에 내발적 동기 보상 리턴하기?
-        if self.delayed_start and (TrainerMetadata().global_step < i_episode + self.intrinsic_reward_start):
-            return 0
+        # if self.delayed_start and (TrainerMetadata().global_step < i_episode + self.intrinsic_reward_start):
+        #    return 0
 
-        return intrinsic_reward_batch
+        # TODO: 멋대로 tanh를 넣어버렸다 ㅠ
+        # intrinsic_reward = torch.tanh(intrinsic_reward).item()
+
+        return intrinsic_reward

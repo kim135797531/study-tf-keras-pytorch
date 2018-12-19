@@ -77,36 +77,39 @@ class LearningNoveltyMotivation(IntrinsicMotivation):
         # noinspection PyAttributeOutsideInit
         self.intrinsic_scale_1 = var_state['intrinsic_scale_1']
 
-    def _train_model(self, state_batch, action_batch, next_state_batch):
-        predicted_state_batch = self.expert(state_batch, action_batch)
+    def _train_model(self, s, a, n_s):
+        predicted_s = self.expert(s, a)
 
-        # TODO: 상태 예측기도 DDPG 처럼 타겟망까지 만들어서 예측? 아니면 단순한 순차 선형 신경망?
         state_prediction_error = nn.L1Loss(reduction='none').to(self.device)
-        state_prediction_error = state_prediction_error(predicted_state_batch.detach(), next_state_batch.detach())
+        state_prediction_error = state_prediction_error(predicted_s.detach(), n_s.detach())
         state_prediction_error = torch.sum(state_prediction_error, dim=1).to(self.device)
 
         # 상태 예측기 최적화
         self.expert_optimizer.zero_grad()
         state_predictor_loss = nn.MSELoss().to(self.device)  # 배치니까 mean 해줘야 할 듯?
-        state_predictor_loss = state_predictor_loss(predicted_state_batch, next_state_batch)
+        state_predictor_loss = state_predictor_loss(predicted_s, n_s)
         state_predictor_loss.backward()
         self.expert_optimizer.step()
 
         return state_prediction_error
 
-    def intrinsic_motivation_impl(self, i_episode, step, batch_tuple, current_sars, current_done):
+    def intrinsic_motivation_impl(self, i_episode, step, current_sars, current_done):
         # Predictive novelty motivation (NM)
-        transitions, state_batch, action_batch, reward_batch, next_state_batch = batch_tuple
+        current_state, current_action, current_reward, current_next_state = current_sars
 
-        state_prediction_error = self._train_model(state_batch, action_batch, next_state_batch)
-        intrinsic_reward_batch = self.intrinsic_scale_1 * state_prediction_error
+        state_prediction_error = self._train_model(
+            u.t_float32(current_state),
+            u.t_float32(current_action),
+            u.t_float32(current_next_state)
+        )
+        intrinsic_reward = self.intrinsic_scale_1 * state_prediction_error
 
         # TODO: 환경 평소 보상 (1) 정도로 clip 해줄까?
-        # intrinsic_reward_batch = torch.clamp(intrinsic_reward_batch, min=-2, max=2)
-        TrainerMetadata().log('intrinsic_reward_batch', torch.mean(intrinsic_reward_batch))
+        # intrinsic_reward = torch.clamp(intrinsic_reward, min=-2, max=2)
+        # TrainerMetadata().log('intrinsic_reward', torch.mean(intrinsic_reward))
 
         # TODO: 제일 처음 Expert망이 조금 학습된 다음에 내발적 동기 보상 리턴하기?
-        if self.delayed_start and (TrainerMetadata().global_step < i_episode + self.intrinsic_reward_start):
-            return 0
+        # if self.delayed_start and (TrainerMetadata().global_step < i_episode + self.intrinsic_reward_start):
+        #    return 0
 
-        return intrinsic_reward_batch
+        return intrinsic_reward
