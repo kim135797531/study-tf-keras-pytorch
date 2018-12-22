@@ -20,6 +20,8 @@ from utils_kdm.trainer_metadata import TrainerMetadata
 class RLAgent(u.TorchSerializable):
 
     def __init__(self, algorithm_im, algorithm_rl, state_size, action_size, action_range, use_intrinsic=True):
+        super().__init__()
+
         self._set_hyper_parameters()
         self.device = TrainerMetadata().device
 
@@ -33,18 +35,13 @@ class RLAgent(u.TorchSerializable):
         if self.use_intrinsic is False:
             self.algorithm_im.intrinsic_reward_ratio = 0
 
+        self.register_serializable([
+            'algorithm_im',
+            'algorithm_rl',
+        ])
+
     def _set_hyper_parameters(self):
         pass
-
-    def state_dict_impl(self):
-        return {
-            'algorithm_rl': self.algorithm_rl.state_dict(),
-            'algorithm_im': self.algorithm_im.state_dict()
-        }
-
-    def load_state_dict_impl(self, var_state):
-        self.algorithm_rl.load_state_dict(var_state['algorithm_rl'])
-        self.algorithm_im.load_state_dict(var_state['algorithm_im'])
 
     def get_action(self, state):
         return self.algorithm_rl.get_action(state)
@@ -83,7 +80,7 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '19_'
+    VIZ_ENV_NAME = '22_'
 
     # 2. 저장 관련 설정
     VERSION = 1
@@ -92,7 +89,7 @@ if __name__ == "__main__":
 
     # 3. 실험 환경 관련 설정
     GYM_ENV = 'Swimmer-v2'
-    RENDER = True
+    RENDER = False
     LOG_INTERVAL = 1
     EPISODES = 30000
 
@@ -170,7 +167,7 @@ if __name__ == "__main__":
                 break
 
         TrainerMetadata().log(score, 'score')
-        TrainerMetadata().log(len(agent.algorithm_rl.memory), 'memory_len')
+        # TrainerMetadata().log(len(agent.algorithm_rl.memory), 'memory_len')
         TrainerMetadata().finish_episode(i_episode)
 
         if IS_SAVE:

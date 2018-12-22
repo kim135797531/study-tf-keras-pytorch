@@ -37,7 +37,7 @@ class TrainerMetadata(TorchSerializable, Singleton):
 
         cls.indicators = None
         cls._last_only_indicators = None
-        cls._keep_all_indicators = None
+        cls._temp_for_maxmin_indicators = None
         cls.best_score = None
 
         cls.start_time = 0
@@ -45,6 +45,14 @@ class TrainerMetadata(TorchSerializable, Singleton):
         # 환경 설정
         cls.log_interval = None
         cls.save_full_path = None
+
+        cls.register_serializable([
+            'current_epoch',
+            'global_step',
+            'indicators',
+            'best_score',
+            'agent',
+        ])
 
     @property
     def device(cls):
@@ -74,7 +82,7 @@ class TrainerMetadata(TorchSerializable, Singleton):
         # 전부 다 저장하는 곳
         # 한 에피소드가 끝나면 Max, Min 값 등을 구해서 indicators로 자료 옮기기
         # 이 안을 출력하는 것은 아니다 (할 거면 진작에 log() 메소드에서 출력함)
-        cls._keep_all_indicators = _make_indicator_defaultdict()
+        cls._temp_for_maxmin_indicators = _make_indicator_defaultdict()
 
         cls.best_score = 0
 
@@ -85,22 +93,6 @@ class TrainerMetadata(TorchSerializable, Singleton):
 
     def set_device(cls, force_cpu=False):
         ManageDevice().set(force_cpu, call_from='TrainerMetadata')
-
-    def state_dict_impl(cls):
-        return {
-            'current_epoch': cls.current_epoch + 1,
-            'global_step': cls.global_step,
-            'indicators': cls.indicators,
-            'best_score': cls.best_score,
-            'agent': cls.agent.state_dict()
-        }
-
-    def load_state_dict_impl(cls, var_state):
-        cls.current_epoch = var_state['current_epoch']
-        cls.global_step = var_state['global_step']
-        cls.indicators = var_state['indicators']
-        cls.best_score = var_state['best_score']
-        cls.agent.load_state_dict(var_state['agent'])
 
     def log(cls, value=0, indicator='default_win', variable='default_var', interval=1, show_only_last=True, compute_maxmin=False):
         # TODO: 저장할 때 value의 타입이 Tensor면 .item() 해서 저장하는게 빠르려나?
@@ -116,7 +108,7 @@ class TrainerMetadata(TorchSerializable, Singleton):
 
             if compute_maxmin:
                 # 한 에피소드 당 변수의 최대/평균/최소 등을 계산하기 위해 저장
-                cls._keep_all_indicators[indicator][variable].append(value)
+                cls._temp_for_maxmin_indicators[indicator][variable].append(value)
 
     def save(cls):
         # state_dict 구성 속도가 느리므로 필요할 때만 구성
@@ -133,7 +125,7 @@ class TrainerMetadata(TorchSerializable, Singleton):
             cls.checkpoint.save_checkpoint(cls.save_full_path, var_state, is_best)
 
     def load(cls):
-        full_path = cls.checkpoint.get_best_model_file_name(__file__)
+        full_path = cls.checkpoint.get_best_model_file_name(cls.save_full_path)
         print("Loading checkpoint '{}'".format(full_path))
         var_state = cls.checkpoint.load_model(full_path=full_path)
         cls.load_state_dict(var_state)
@@ -141,7 +133,8 @@ class TrainerMetadata(TorchSerializable, Singleton):
         for indicator_name, variables in cls.indicators.items():
             for variable_name, variable_sequence in variables.items():
                 for i_episode in range(0, len(variable_sequence)):
-                    cls.viz.draw_line(x=i_episode, y=variable_sequence[i_episode],
+                    y = u.maybe_float(variable_sequence[i_episode])
+                    cls.viz.draw_line(x=i_episode, y=y,
                                       win=indicator_name, variable=variable_name)
 
         print("Loading complete. Resuming from episode: {}".format(cls.current_epoch - 1))
@@ -165,7 +158,7 @@ class TrainerMetadata(TorchSerializable, Singleton):
             for variable_name, variable in variables.items():
                 cls.indicators[indicator_name][variable_name].append(variable)
 
-        for indicator_name, variables in cls._keep_all_indicators.items():
+        for indicator_name, variables in cls._temp_for_maxmin_indicators.items():
             for variable_name, variable_sequence in variables.items():
                 # TODO: 그냥 max 써도 되나? torch.max?
                 # TODO: mean 일반화
@@ -175,7 +168,7 @@ class TrainerMetadata(TorchSerializable, Singleton):
                 cls.indicators[indicator_name]['max'].append(val_max)
                 cls.indicators[indicator_name]['min'].append(val_min)
                 # 맨 마지막 값은 나중에 불러오기 할 때 개략적으로나마 표시해 주기 위해
-                cls.indicators[indicator_name][variable_name].append(variable_sequence[-1])
+                # cls.indicators[indicator_name][variable_name].append(variable_sequence[-1])
 
         if i_episode % cls.log_interval == 0:
             # TODO: score는 그냥 전부 있다고 가정하고 변수화?
@@ -196,4 +189,4 @@ class TrainerMetadata(TorchSerializable, Singleton):
                     cls.viz.draw_line(x=i_episode, y=y, win=indicator_name, variable=variable_name)
 
             cls._last_only_indicators.clear()
-            cls._keep_all_indicators.clear()
+            cls._temp_for_maxmin_indicators.clear()

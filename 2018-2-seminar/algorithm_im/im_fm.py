@@ -30,7 +30,7 @@ class StatePredictor(nn.Module):
     def forward(self, state, action):
         # 그냥 일렬로 합쳐기
         # Oudeyer (2007)
-        x = torch.cat((state, action), dim=1)
+        x = torch.cat((state, action), dim=0)
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
         return self.head(x)
@@ -43,21 +43,15 @@ class PredictiveFamiliarityMotivation(IntrinsicMotivation):
         self._set_hyper_parameters()
         self.region_manager = RegionManager(self.state_size, self.action_size)
 
+        self.register_serializable([
+            'self.region_manager',
+        ])
+
     def _set_hyper_parameters(self):
         super()._set_hyper_parameters()
 
         # TODO: 적절한 C는 내가 찾아야 함 (일단 알고리즘 밖에서 전체 decay 중)
         self.intrinsic_scale_1 = 0.001
-
-    def state_dict_impl(self):
-        # TODO: 저장 불러오기
-        todo = {
-        }
-        return todo
-
-    def load_state_dict_impl(self, var_state):
-        # TODO: 저장 불러오기
-        pass
 
     def intrinsic_motivation_impl(self, i_episode, step, current_sars, current_done):
         # Learning progress motivation (LPM)

@@ -62,6 +62,8 @@ class Critic(nn.Module):
 class A2C(u.TorchSerializable):
 
     def __init__(self, state_size, action_size):
+        super().__init__()
+
         self._set_hyper_parameters()
         self.device = TrainerMetadata().device
 
@@ -84,6 +86,13 @@ class A2C(u.TorchSerializable):
             lr=self.learning_rate_critic
         )
 
+        self.register_serializable([
+            'self.actor',
+            'self.critic',
+            'self.actor_optimizer',
+            'self.critic_optimizer',
+        ])
+
     def _set_hyper_parameters(self):
         # Adam 하이퍼 파라미터
         self.learning_rate_actor = 0.001
@@ -91,20 +100,6 @@ class A2C(u.TorchSerializable):
 
         # 평가망 학습 하이퍼 파라미터
         self.discount_factor = 0.99
-
-    def state_dict_impl(self):
-        return {
-            'actor': self.actor.state_dict(),
-            'critic': self.critic.state_dict(),
-            'actor_optimizer': self.actor_optimizer.state_dict(),
-            'critic_optimizer': self.critic_optimizer.state_dict()
-        }
-
-    def load_state_dict_impl(self, var_state):
-        self.actor.load_state_dict(var_state['actor'])
-        self.critic.load_state_dict(var_state['critic'])
-        self.actor_optimizer.load_state_dict(var_state['actor_optimizer'])
-        self.critic_optimizer.load_state_dict(var_state['critic_optimizer'])
 
     def reset(self):
         pass
@@ -114,7 +109,14 @@ class A2C(u.TorchSerializable):
         probs = self.actor(state)
         return Categorical(probs).sample().item()
 
-    def train_model(self, state, action, reward, next_state, done):
+    def train_model(self, sars, done):
+        (state, action, reward, next_state) = sars
+
+        state = u.t_float32(state)
+        action = u.t_float32(action)
+        reward = u.t_float32(reward)
+        next_state = u.t_float32(next_state)
+
         value = self.critic(state)
         next_value = self.critic(next_state)
 

@@ -30,3 +30,5 @@ Critic 0.001",128,750000,2000,|||||||,x,x,x,x,x,x,x,x,1,|||||||,x,
 17,ddpg_runner.py,2018-12-19,*,130,646,400,|||||||,↑,↑,↑,↑,↑,↑,|||||||,FM(Predictive Familiarity Motivation),↑,0.001,↑,"""-2 ~ 2”",↑,↑,↑,↑,|||||||,https://youtu.be/pgxm_bcgpQE,제미 자료 제출 전 전체 재검증용
 18,ddpg_runner.py,2018-12-19,*,130,5181,1100,|||||||,↑,↑,↑,↑,↑,↑,|||||||,NM(Predictive Novelty Motivation),0.1 / 0.9,1,↑,x,0.001,↑,↑,1,|||||||,https://youtu.be/I5E6BOVHdZc,제미 자료 제출 전 전체 재검증용
 19,ddpg_runner.py,2018-12-19,*,130,3361,400,|||||||,↑,↑,↑,↑,↑,↑,|||||||,SM(Predictive Surprise Motivation),0.5 / 0.5,0.0001,↑,x,↑,↑,↑,↑,|||||||,https://youtu.be/I5E6BOVHdZc,제미 자료 제출 전 전체 재검증용
+20,ddpg_runner.py,2018-12-22,,130,27616,1100,|||||||,↑,↑,↑,↑,↑,↑,|||||||,NM(Predictive Novelty Motivation),0.1 / 0.9,1,↑,x,↑,↑,↑,↑,|||||||,https://youtu.be/BB2woFhOSFo,18을 엄청 오래 돌려봄
+21,ddpg_runner.py,2018-12-22,,130,23136,400,|||||||,↑,↑,↑,↑,↑,↑,|||||||,SM(Predictive Surprise Motivation),0.5 / 0.5,0.0001,↑,x,↑,↑,↑,↑,|||||||,https://youtu.be/BB2woFhOSFo,19를 엄청 오래 돌려봄

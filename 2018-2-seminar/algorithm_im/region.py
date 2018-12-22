@@ -35,7 +35,7 @@ class Expert(nn.Module):
     def forward(self, state, action):
         # 그냥 일렬로 합쳐기
         # Oudeyer (2007)
-        x = torch.cat((state, action), dim=1)
+        x = torch.cat((state, action), dim=0)
         # x = s_a
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
@@ -47,9 +47,10 @@ class Region(u.TorchSerializable):
     # TODO: 리전별로 객체화 하면 엄청 느릴 것 같은데..
     # TODO: Torch stack으로?
     def __init__(self, state_size, action_size):
+        super().__init__()
+
         self._set_hyper_parameters()
         self.device = TrainerMetadata().device
-        # self.device = torch.device('cpu')
         self.state_size = state_size
         self.action_size = action_size
 
@@ -76,6 +77,19 @@ class Region(u.TorchSerializable):
         )
         self.loss_queue = deque(maxlen=self.past_time + self.time_window)
 
+        self.register_serializable([
+            'self.expert',
+            'self.expert_optimizer',
+            'self._is_leaf',
+            'self.cutting_dim',
+            'self.cutting_val',
+            'self.left_child',
+            'self.right_child',
+            'self.exemplars',
+            'self.transposed_exemplars',
+            'self.loss_queue',
+        ])
+
     def _set_hyper_parameters(self):
         # TODO: 저장, 로드
         # Expert망 Adam 학습률
@@ -85,19 +99,6 @@ class Region(u.TorchSerializable):
         self.past_time = 15
         # 논문에서 tau, 얼마만큼의 오차 평균을 내서 비교할 것인가
         self.time_window = 25
-
-    def state_dict_impl(self):
-        # TODO: 저장, 로드
-        return {
-            'expert': self.expert.state_dict(),
-            'expert_optimizer': self.expert_optimizer.state_dict()
-        }
-
-    def load_state_dict_impl(self, var_state):
-        self.expert.load_state_dict(var_state['expert'])
-        self.expert_optimizer.load_state_dict(var_state['expert_optimizer'])
-        # noinspection PyAttributeOutsideInit
-        self.intrinsic_scale_1 = var_state['intrinsic_scale_1']
 
     def is_leaf(self):
         return self._is_leaf
@@ -209,18 +210,14 @@ class RegionManager(u.TorchSerializable):
         self.region_head = Region(state_size, action_size)
         self.exemplar_structure = self.region_head.exemplar_structure
 
+        self.register_serializable([
+            'self.region_head',
+        ])
+
     def _set_hyper_parameters(self):
         self.region_maxlen = 250
         # 분산 계산할 때 각 리전에 최소 2개 이상씩은 있어야 함
         assert(self.region_maxlen >= 4)
-
-    def state_dict_impl(self):
-        # TODO: 저장, 로드
-        pass
-
-    def load_state_dict_impl(self, state_dict):
-        # TODO: 저장, 로드
-        pass
 
     def add(self, exemplar):
         region = self.find_region(exemplar)

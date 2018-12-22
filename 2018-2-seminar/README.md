@@ -4,7 +4,8 @@
 
 ## Prerequisites
 * Python 3.6
-* Pytorch 0.4.1
-* Numpy 1.15.3
-* Mujoco 1.5
-* gym (OpenAI Gym)
+* Pytorch 1.0.0
+* Numpy 1.15.4
+* Mujoco 1.5 (mujoco-py-1.50.1.68)
+* gym (OpenAI Gym) (gym-0.10.9)
+* visdom 0.1.8.5

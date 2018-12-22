@@ -9,10 +9,18 @@ from utils_kdm import TorchSerializable
 class ReplayMemory(TorchSerializable):
     # TODO: 주석 달기
     def __init__(self, capacity, structure=None):
+        super().__init__()
+
         self.capacity = capacity
         self.memory = []
         self.position = 0
         self.structure = structure if structure else self._default_structure()
+
+        self.register_serializable([
+            'capacity',
+            'memory',
+            'position'
+        ])
 
     def _default_structure(self):
         return namedtuple('Transition', ('state', 'action', 'reward', 'next_state', 'done'))
@@ -28,15 +36,3 @@ class ReplayMemory(TorchSerializable):
 
     def __len__(self):
         return len(self.memory)
-
-    def state_dict_impl(self):
-        return {
-            'capacity': self.capacity,
-            'memory': self.memory,
-            'position': self.position
-        }
-
-    def load_state_dict_impl(self, state_dict):
-        self.capacity = state_dict['capacity']
-        self.memory = state_dict['memory']
-        self.position = state_dict['position']

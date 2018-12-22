@@ -30,7 +30,7 @@ class StatePredictor(nn.Module):
     def forward(self, state, action):
         # 그냥 일렬로 합쳐기
         # Oudeyer (2007)
-        x = torch.cat((state, action), dim=1)
+        x = torch.cat((state, action), dim=0)
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
         return self.head(x)
@@ -50,6 +50,11 @@ class LearningNoveltyMotivation(IntrinsicMotivation):
             lr=self.learning_rate_expert
         )
 
+        self.register_serializable([
+            'self.expert',
+            'self.expert_optimizer',
+        ])
+
     def _set_hyper_parameters(self):
         super()._set_hyper_parameters()
 
@@ -59,30 +64,12 @@ class LearningNoveltyMotivation(IntrinsicMotivation):
         # TODO: 적절한 C는 내가 찾아야 함 (일단 알고리즘 밖에서 전체 decay 중)
         self.intrinsic_scale_1 = 1
 
-    def state_dict_impl(self):
-        todo = super().state_dict_impl()
-        # TODO: 저장 불러오기
-        todo = {
-            'expert': self.expert.state_dict(),
-            'expert_optimizer': self.expert_optimizer.state_dict(),
-            'intrinsic_scale_1': self.intrinsic_scale_1
-        }
-        return todo
-
-    def load_state_dict_impl(self, var_state):
-        super().load_state_dict(var_state)
-        # TODO: 저장 불러오기
-        self.expert.load_state_dict(var_state['expert'])
-        self.expert_optimizer.load_state_dict(var_state['expert_optimizer'])
-        # noinspection PyAttributeOutsideInit
-        self.intrinsic_scale_1 = var_state['intrinsic_scale_1']
-
     def _train_model(self, s, a, n_s):
         predicted_s = self.expert(s, a)
 
         state_prediction_error = nn.L1Loss(reduction='none').to(self.device)
         state_prediction_error = state_prediction_error(predicted_s.detach(), n_s.detach())
-        state_prediction_error = torch.sum(state_prediction_error, dim=1).to(self.device)
+        state_prediction_error = torch.sum(state_prediction_error, dim=0).to(self.device)
 
         # 상태 예측기 최적화
         self.expert_optimizer.zero_grad()

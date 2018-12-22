@@ -13,18 +13,12 @@ class LearningProgressMotivationOudeyer(IntrinsicMotivation):
         self._set_hyper_parameters()
         self.region_manager = RegionManager(self.state_size, self.action_size)
 
+        self.register_serializable([
+            'self.region_manager',
+        ])
+
     def _set_hyper_parameters(self):
         super()._set_hyper_parameters()
-
-    def state_dict_impl(self):
-        # TODO: 저장 불러오기
-        todo = {
-        }
-        return todo
-
-    def load_state_dict_impl(self, var_state):
-        # TODO: 저장 불러오기
-        pass
 
     def intrinsic_motivation_impl(self, i_episode, step, current_sars, current_done):
         # Learning progress motivation (LPM)

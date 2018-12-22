@@ -4,6 +4,7 @@ from abc import ABCMeta, abstractmethod
 
 import numpy as np
 import torch
+import torch.nn as nn
 
 from utils_kdm.manage_device import ManageDevice
 
@@ -21,21 +22,36 @@ def get_np_float32_eps():
 class TorchSerializable(object):
     __metaclass__ = ABCMeta
 
-    @abstractmethod
-    def state_dict_impl(self):
-        raise NotImplementedError("Please implement this method.")
+    def __init__(self):
+        self._registered_variables = list()
+
+    def register_serializable(self, variables):
+        for k in variables:
+            if 'self.' in k:
+                k = k[5:]
+            self._registered_variables.append(k)
 
     def state_dict(self):
-        ret = self.state_dict_impl()
+        ret = dict()
+        for k in self._registered_variables:
+            variable = getattr(self, k, None)
+            if variable is None:
+                print('Skipping not registered variable: {}'.format(k))
+            state_dict_method = getattr(variable, "state_dict", None)
+            ret[k] = variable.state_dict() if state_dict_method else variable
+
         return ret
 
-    @abstractmethod
-    def load_state_dict_impl(self, state_dict):
-        raise NotImplementedError("Please implement this method.")
-
-    def load_state_dict(self, state_dict):
-        ret = self.load_state_dict_impl(state_dict)
-        return ret
+    def load_state_dict(self, var_state):
+        for k in self._registered_variables:
+            variable = getattr(self, k, None)
+            if variable is None:
+                print('Skipping not registered variable: {}'.format(k))
+            state_dict_method = getattr(variable, "state_dict", None)
+            if state_dict_method:
+                variable.load_state_dict(var_state[k])
+            else:
+                setattr(self, k, var_state[k])
 
 
 #####################
@@ -43,22 +59,41 @@ class TorchSerializable(object):
 #####################
 def t_uint8(item, device=None):
     device = device if device else ManageDevice().get()
-    return torch.tensor([item], device=device, dtype=torch.float32)
+    if isinstance(item, np.ndarray):
+        return t_from_np_to_uint8(item, device)
+    else:
+        return torch.tensor([item], device=device, dtype=torch.uint8)
 
 
 def t_float32(item, device=None):
     device = device if device else ManageDevice().get()
-    return torch.tensor([item], device=device, dtype=torch.float32)
+    if isinstance(item, np.ndarray):
+        return t_from_np_to_float32(item, device)
+    else:
+        return torch.tensor([item], device=device, dtype=torch.float32)
 
 
 def t_long(item, device=None):
     device = device if device else ManageDevice().get()
-    return torch.tensor([item], device=device, dtype=torch.long)
+    if isinstance(item, np.ndarray):
+        return t_from_np_to_long(item, device)
+    else:
+        return torch.tensor([item], device=device, dtype=torch.long)
+
+
+def t_from_np_to_uint8(item, device=None):
+    device = device if device else ManageDevice().get()
+    return torch.from_numpy(item).int().to(device)
 
 
 def t_from_np_to_float32(item, device=None):
     device = device if device else ManageDevice().get()
     return torch.from_numpy(item).float().to(device)
+
+
+def t_from_np_to_long(item, device=None):
+    device = device if device else ManageDevice().get()
+    return torch.from_numpy(item).long().to(device)
 
 
 def maybe_float(item):

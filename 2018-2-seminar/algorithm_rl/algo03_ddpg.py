@@ -75,6 +75,8 @@ class Critic(nn.Module):
 class DDPG(u.TorchSerializable):
 
     def __init__(self, state_size, action_size, action_range=(-1, 1)):
+        super().__init__()
+
         self._set_hyper_parameters()
         self.device = TrainerMetadata().device
 
@@ -117,6 +119,17 @@ class DDPG(u.TorchSerializable):
         # 오른스타인-우렌벡 과정
         self.noise = OrnsteinUhlenbeckNoise(self.action_size)
 
+        self.register_serializable([
+            'self.actor',
+            'self.critic',
+            'self.target_actor',
+            'self.target_critic',
+            'self.actor_optimizer',
+            'self.critic_optimizer',
+            'self.memory',
+            'self.noise',
+        ])
+
     def _set_hyper_parameters(self):
         # Adam 하이퍼 파라미터
         self.learning_rate_actor = 0.0001
@@ -138,28 +151,6 @@ class DDPG(u.TorchSerializable):
         # self.memory_maxlen = int(1e+6)
         self.memory_maxlen = 750000
         self.train_start = 2000
-
-    def state_dict_impl(self):
-        return {
-            'actor': self.actor.state_dict(),
-            'critic': self.critic.state_dict(),
-            'target_actor': self.target_actor.state_dict(),
-            'target_critic': self.target_critic.state_dict(),
-            'actor_optimizer': self.actor_optimizer.state_dict(),
-            'critic_optimizer': self.critic_optimizer.state_dict(),
-            'memory': self.memory.state_dict(),
-            'noise': self.noise.state_dict()
-        }
-
-    def load_state_dict_impl(self, var_state):
-        self.actor.load_state_dict(var_state['actor'])
-        self.critic.load_state_dict(var_state['critic'])
-        self.target_actor.load_state_dict(var_state['target_actor'])
-        self.target_critic.load_state_dict(var_state['target_critic'])
-        self.actor_optimizer.load_state_dict(var_state['actor_optimizer'])
-        self.critic_optimizer.load_state_dict(var_state['critic_optimizer'])
-        self.memory.load_state_dict(var_state['memory'])
-        self.noise.load_state_dict(var_state['noise'])
 
     def reset(self):
         self.noise.reset()
@@ -196,7 +187,7 @@ class DDPG(u.TorchSerializable):
         # (보상)'             = 예측한 보상
         # r + (r+1)'
         # r'
-        expected_rewards = r_batch.unsqueeze(dim=1) + self.discount_factor * target_rewards
+        expected_rewards = r_batch + (self.discount_factor * target_rewards)
         predicted_rewards = self.critic(s_batch, a_batch)
 
         critic_loss = nn.MSELoss().to(self.device)
@@ -250,10 +241,10 @@ class DDPG(u.TorchSerializable):
         # TODO: 이거 튜플로 묶으면 다시 GPU에서 CPU로 오나?
         # 텐서의 집합에서 고차원 텐서로
         # tuple(tensor, ...) -> tensor()
-        s_batch = torch.cat(sars_batch.state).to(self.device)
-        a_batch = torch.cat(sars_batch.action).to(self.device)
-        r_batch = torch.cat(sars_batch.reward).to(self.device)
-        next_s_batch = torch.cat(sars_batch.next_state).to(self.device)
+        s_batch = torch.stack(sars_batch.state).to(self.device)
+        a_batch = torch.stack(sars_batch.action).to(self.device)
+        r_batch = torch.stack(sars_batch.reward).to(self.device)
+        next_s_batch = torch.stack(sars_batch.next_state).to(self.device)
 
         self.critic_optimizer.zero_grad()
         critic_loss = self.get_critic_loss(s_batch, a_batch, r_batch, next_s_batch)

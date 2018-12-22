@@ -15,10 +15,19 @@ class IntrinsicMotivation(TorchSerializable):
     __metaclass__ = ABCMeta
 
     def __init__(self, state_size, action_size):
+        super().__init__()
+
         self._set_hyper_parameters()
         self.device = TrainerMetadata().device
 
         self.state_size, self.action_size = state_size, action_size
+
+        self.register_serializable([
+            'self.intrinsic_reward_ratio',
+            'self.intrinsic_reward_ratio_annealing',
+            'self.intrinsic_reward_ratio_decay',
+            'self.intrinsic_reward_ratio_min',
+        ])
 
     def _set_hyper_parameters(self):
         # TODO: 지연된 시작?
@@ -34,12 +43,6 @@ class IntrinsicMotivation(TorchSerializable):
         self.intrinsic_reward_ratio_annealing = False
         self.intrinsic_reward_ratio_decay = 0.999
         self.intrinsic_reward_ratio_min = 0.001
-
-    def state_dict_impl(self):
-        return {}
-
-    def load_state_dict_impl(self, var_state):
-        pass
 
     def scale_annealing(self):
         if self.intrinsic_reward_ratio_annealing and \
