@@ -31,12 +31,19 @@ class TorchSerializable(object):
                 k = k[5:]
             self._registered_variables.append(k)
 
+    def unregister_serializable(self, variables):
+        for k in variables:
+            if 'self.' in k:
+                k = k[5:]
+            if k in self._registered_variables:
+                self._registered_variables.remove(k)
+
     def state_dict(self):
         ret = dict()
         for k in self._registered_variables:
             variable = getattr(self, k, None)
             if variable is None:
-                print('Skipping not registered variable: {}'.format(k))
+                print('state_dict(): Skipping not registered variable: {}'.format(k))
             state_dict_method = getattr(variable, "state_dict", None)
             ret[k] = variable.state_dict() if state_dict_method else variable
 
@@ -44,9 +51,13 @@ class TorchSerializable(object):
 
     def load_state_dict(self, var_state):
         for k in self._registered_variables:
+            if k not in var_state:
+                print('load_state_dict(): Skipping not registered variable: {}'.format(k))
+                continue
+
             variable = getattr(self, k, None)
             if variable is None:
-                print('Skipping not registered variable: {}'.format(k))
+                print('load_state_dict(): Skipping not registered variable: {}'.format(k))
             state_dict_method = getattr(variable, "state_dict", None)
             if state_dict_method:
                 variable.load_state_dict(var_state[k])

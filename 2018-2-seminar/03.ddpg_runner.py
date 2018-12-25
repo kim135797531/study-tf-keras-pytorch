@@ -7,7 +7,7 @@ import torch
 
 import utils_kdm as u
 from algorithm_im.im_fm import PredictiveFamiliarityMotivation
-from algorithm_im.im_lpm import LearningProgressMotivationOudeyer
+from algorithm_im.im_lpm import LearningProgressMotivation
 from algorithm_im.im_nm import LearningNoveltyMotivation
 from algorithm_im.im_sm import PredictiveSurpriseMotivation
 from algorithm_rl.algo03_ddpg import DDPG, Transition
@@ -84,12 +84,12 @@ if __name__ == "__main__":
 
     # 2. 저장 관련 설정
     VERSION = 1
-    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 402
+    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 2
     SAVE_FULL_PATH = __file__
 
     # 3. 실험 환경 관련 설정
     GYM_ENV = 'Swimmer-v2'
-    RENDER = False
+    RENDER = True
     LOG_INTERVAL = 1
     EPISODES = 30000
 
@@ -114,8 +114,8 @@ if __name__ == "__main__":
     #      메타망은 오차 작은데 그냥 예측망이 오차 높으면 보상 높음
     # FM = 각 '지역'별로 오차가 작을수록 보상 높음
     # algorithm_im = LearningNoveltyMotivation(state_size, action_size)
-    # algorithm_im = LearningProgressMotivation(state_size, action_size)
-    algorithm_im = PredictiveSurpriseMotivation(state_size, action_size)
+    algorithm_im = LearningProgressMotivation(state_size, action_size)
+    # algorithm_im = PredictiveSurpriseMotivation(state_size, action_size)
     # algorithm_im = PredictiveFamiliarityMotivation(state_size, action_size)
 
     algorithm_rl = DDPG(state_size, action_size, action_range)

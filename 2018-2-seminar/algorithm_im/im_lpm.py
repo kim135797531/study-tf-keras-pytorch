@@ -2,10 +2,10 @@
 
 import utils_kdm as u
 from algorithm_im.im_base import IntrinsicMotivation
-from algorithm_im.region import RegionManager
+from algorithm_im.region import RegionManager, ExemplarStructure
 
 
-class LearningProgressMotivationOudeyer(IntrinsicMotivation):
+class LearningProgressMotivation(IntrinsicMotivation):
     # Oudeyer et al. (2007)
 
     def __init__(self, state_size, action_size):
@@ -24,7 +24,7 @@ class LearningProgressMotivationOudeyer(IntrinsicMotivation):
         # Learning progress motivation (LPM)
         current_state, current_action, current_reward, current_next_state = current_sars
 
-        examplar = self.region_manager.exemplar_structure(
+        examplar = ExemplarStructure(
             u.t_float32(current_state),
             u.t_float32(current_action),
             u.t_float32(current_next_state)

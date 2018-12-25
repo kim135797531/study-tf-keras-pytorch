@@ -225,6 +225,7 @@ class DDPG(u.TorchSerializable):
         # sum 이 아니라 mean 인 이유
         # -> sum이든 mean이든 똑같으나 (N은 같으므로)
         # -> sum 했을 때 값이 많이 커지니까 그냥 보기 좋게 mean으로..
+        # -> 원래는 최대화 해 주는건데 pytorch 등등의 step() 구현은 자동 최소화를 해 주므로, 이에 맞추기 위해 (-)를 곱함
         # actor_loss = -1*torch.sum(q_output).to(self.device)
         actor_loss = -1 * torch.mean(q_output).to(self.device)
 

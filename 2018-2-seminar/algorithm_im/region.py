@@ -16,6 +16,9 @@ from utils_kdm import ManageDevice
 from utils_kdm.trainer_metadata import TrainerMetadata
 
 
+ExemplarStructure = namedtuple('ExemplarStructure', ('state', 'action', 'next_state'))
+
+
 class Expert(nn.Module):
 
     def __init__(self, state_size, action_size):
@@ -35,7 +38,7 @@ class Expert(nn.Module):
     def forward(self, state, action):
         # 그냥 일렬로 합쳐기
         # Oudeyer (2007)
-        x = torch.cat((state, action), dim=0)
+        x = torch.cat((state, action), dim=1)
         # x = s_a
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
@@ -64,7 +67,6 @@ class Region(u.TorchSerializable):
         self.right_child = None
 
         self.exemplars = list()
-        self.exemplar_structure = namedtuple('Exemplar', ('state', 'action', 'next_state'))
 
         self.transposed_exemplars = list()
         for i in range(self.global_max_dim):
@@ -81,10 +83,6 @@ class Region(u.TorchSerializable):
             'self.expert',
             'self.expert_optimizer',
             'self._is_leaf',
-            'self.cutting_dim',
-            'self.cutting_val',
-            'self.left_child',
-            'self.right_child',
             'self.exemplars',
             'self.transposed_exemplars',
             'self.loss_queue',
@@ -100,6 +98,29 @@ class Region(u.TorchSerializable):
         # 논문에서 tau, 얼마만큼의 오차 평균을 내서 비교할 것인가
         self.time_window = 25
 
+    def state_dict(self):
+        print('save')
+        ret = super().state_dict()
+        return ret
+
+    def load_state_dict(self, var_state):
+        if not var_state['_is_leaf']:
+            self.register_serializable([
+                'self.cutting_dim',
+                'self.cutting_val',
+                'self.left_child',
+                'self.right_child',
+            ])
+            self.unregister_serializable([
+                'self.expert',
+                'self.expert_optimizer',
+                'self.exemplars',
+                'self.transposed_exemplars',
+                'self.loss_queue',
+            ])
+
+        super().load_state_dict(var_state)
+
     def is_leaf(self):
         return self._is_leaf
 
@@ -114,6 +135,19 @@ class Region(u.TorchSerializable):
         del self.expert
         del self.expert_optimizer
         del self.loss_queue
+        self.register_serializable([
+            'self.cutting_dim',
+            'self.cutting_val',
+            'self.left_child',
+            'self.right_child',
+        ])
+        self.unregister_serializable([
+            'self.expert',
+            'self.expert_optimizer',
+            'self.exemplars',
+            'self.transposed_exemplars',
+            'self.loss_queue',
+        ])
 
     def global_dim_to_local_dim(self, global_dim):
         # ex) state가 8개, action이 2개면
@@ -141,14 +175,14 @@ class Region(u.TorchSerializable):
 
     def _train_model(self, exemplar):
         if isinstance(exemplar, list):
-            exemplars = self.exemplar_structure(*zip(*exemplar))
-            s = torch.cat(exemplars.state).to(self.device)
-            a = torch.cat(exemplars.action).to(self.device)
-            next_s = torch.cat(exemplars.next_state).to(self.device)
+            exemplars = ExemplarStructure(*zip(*exemplar))
+            s = torch.stack(exemplars.state).to(self.device)
+            a = torch.stack(exemplars.action).to(self.device)
+            next_s = torch.stack(exemplars.next_state).to(self.device)
         else:
-            s = exemplar.state
-            a = exemplar.action
-            next_s = exemplar.next_state
+            s = exemplar.state.unsqueeze(dim=0)
+            a = exemplar.action.unsqueeze(dim=0)
+            next_s = exemplar.next_state.unsqueeze(dim=0)
 
         predicted_next_s = self.expert(s, a)
 
@@ -166,7 +200,7 @@ class Region(u.TorchSerializable):
         # TODO: 제발 속도 개선 하면서 속도를 더 느려지게 하지 말자 ㅠ
         for i in range(self.global_max_dim):
             first_dim, second_dim = self.global_dim_to_local_dim(i)
-            self.transposed_exemplars[i].append(exemplar[first_dim][0][second_dim])
+            self.transposed_exemplars[i].append(exemplar[first_dim][second_dim])
 
     def add(self, exemplar):
         self.exemplars.append(exemplar)
@@ -205,10 +239,11 @@ class Region(u.TorchSerializable):
 class RegionManager(u.TorchSerializable):
 
     def __init__(self, state_size, action_size):
+        super().__init__()
+
         self._set_hyper_parameters()
         self.device = TrainerMetadata().device
         self.region_head = Region(state_size, action_size)
-        self.exemplar_structure = self.region_head.exemplar_structure
 
         self.register_serializable([
             'self.region_head',
@@ -233,8 +268,8 @@ class RegionManager(u.TorchSerializable):
         min_weighted_var, min_cutting_dim, min_left_indices, min_right_indices = None, None, None, None
         n_dim = region.state_size + region.action_size  # SM(t)
 
-        next_state_batch = self.exemplar_structure(*zip(*region.exemplars)).next_state
-        next_state_tensor = torch.cat(next_state_batch).to(self.device)
+        next_state_batch = ExemplarStructure(*zip(*region.exemplars)).next_state
+        next_state_tensor = torch.stack(next_state_batch).to(self.device)
 
         for dim in range(n_dim):
             # TODO: 여러 dim에 대해 동시에 돌리기
@@ -250,9 +285,8 @@ class RegionManager(u.TorchSerializable):
         min_right_child = Region(region.state_size, region.action_size)
         min_right_child.add_all(list(compress(region.exemplars, min_right_indices)))
 
-        # TODO: 중간 dimension 하드코딩.. [first_dim]!!![0]!!![second_dim]
         first_dim, second_dim = region.global_dim_to_local_dim(min_cutting_dim)
-        min_cutting_val = min_left_child.exemplars[-1][first_dim][0][second_dim]
+        min_cutting_val = min_left_child.exemplars[-1][first_dim][second_dim]
 
         region.set_as_non_leaf(min_cutting_dim, min_cutting_val, min_left_child, min_right_child)
 
@@ -290,13 +324,12 @@ class RegionManager(u.TorchSerializable):
                 break
 
             first_dim, second_dim = current.global_dim_to_local_dim(current.cutting_dim)
-            if current.cutting_val < sars[first_dim][0][second_dim]:
+            if current.cutting_val < sars[first_dim][second_dim]:
                 current = current.left_child
             else:
                 current = current.right_child
 
         return current
-
 
     """
     def em_algorithm(self, region, dim):
@@ -317,7 +350,7 @@ class RegionManager(u.TorchSerializable):
 
         n_clusters = 2
 
-        samples = self.exemplar_structure(*zip(*region.exemplars))
+        samples = ExemplarStructure(*zip(*region.exemplars))
 
         # TODO: 이거 튜플로 묶으면 다시 GPU에서 CPU로 오나?
         # 텐서의 집합에서 고차원 텐서로
@@ -369,7 +402,7 @@ if __name__ == "__main__":
     state = u.t_from_np_to_float32(state)
     action = u.t_from_np_to_float32(action)
     next_state = u.t_from_np_to_float32(next_state)
-    sample_1 = region_manager.exemplar_structure(state, action, next_state)
+    sample_1 = ExemplarStructure(state, action, next_state)
 
     state = np.float32([21, 22, 23, 24, 25, 26, 27, 28])
     action = np.float32([29, 30])
@@ -377,7 +410,7 @@ if __name__ == "__main__":
     state = u.t_from_np_to_float32(state)
     action = u.t_from_np_to_float32(action)
     next_state = u.t_from_np_to_float32(next_state)
-    sample_2 = region_manager.exemplar_structure(state, action, next_state)
+    sample_2 = ExemplarStructure(state, action, next_state)
 
     for i in range(100):
         region_manager.add(deepcopy(sample_1))
