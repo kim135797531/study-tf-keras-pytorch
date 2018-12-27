@@ -99,7 +99,7 @@ class Region(u.TorchSerializable):
         self.time_window = 25
 
     def state_dict(self):
-        print('save')
+        # print('save')
         ret = super().state_dict()
         return ret
 

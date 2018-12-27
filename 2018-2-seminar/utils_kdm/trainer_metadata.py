@@ -96,6 +96,7 @@ class TrainerMetadata(TorchSerializable, Singleton):
 
     def log(cls, value=0, indicator='default_win', variable='default_var', interval=1, show_only_last=True, compute_maxmin=False):
         # TODO: 저장할 때 value의 타입이 Tensor면 .item() 해서 저장하는게 빠르려나?
+        value = u.maybe_float(value)
         if cls.global_step % interval == 0:
             if show_only_last:
                 # 맨 마지막 값만 유지
