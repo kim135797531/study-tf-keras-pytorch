@@ -86,7 +86,7 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '22_'
+    VIZ_ENV_NAME = '999_'
 
     # 2. 저장 관련 설정
     VERSION = 1
@@ -122,9 +122,9 @@ if __name__ == "__main__":
     # SM = NM에서 쓰인 예측을 또 다시 예측하는 메타망을 사용해서,
     #      메타망은 오차 작은데 그냥 예측망이 오차 높으면 보상 높음
     # FM = 각 '지역'별로 오차가 작을수록 보상 높음
-    # algorithm_im = LearningNoveltyMotivation(state_size, action_size)
+    algorithm_im = LearningNoveltyMotivation(state_size, action_size)
     # algorithm_im = LearningProgressMotivation(state_size, action_size)
-    algorithm_im = PredictiveSurpriseMotivation(state_size, action_size)
+    # algorithm_im = PredictiveSurpriseMotivation(state_size, action_size)
     # algorithm_im = PredictiveFamiliarityMotivation(state_size, action_size)
 
     algorithm_rl = TRPO(state_size, action_size)
@@ -145,6 +145,9 @@ if __name__ == "__main__":
     if IS_LOAD:
         TrainerMetadata().load()
 
+    # TODO: 도대체 running_state란?
+    running_state = ZFilter((state_size,), clip=5)
+
     # TODO: iter 변수 만들고 resume 가능하게
     for iter in range(15000):
         TrainerMetadata().start_episode()
@@ -160,8 +163,7 @@ if __name__ == "__main__":
         for i_episode in range(0, EPISODES):
 
             state = env.reset()
-            # TODO: 도대체 running_state란?
-            running_state = ZFilter((state_size,), clip=5)
+            state = running_state(state)
             score = u.t_float32(0)
 
             # 각 에피소드당 환경에 정의된 최대 스텝 수만큼 돌린다
@@ -171,16 +173,15 @@ if __name__ == "__main__":
 
                 action = agent.get_action(state)
                 next_state, reward, done, _ = env.step(action)
-
-                # TODO: 도대체 running_state란?
                 next_state = running_state(next_state)
 
                 TrainerMetadata().log(reward, 'ext_reward', show_only_last=True, compute_maxmin=True)
 
-                int_reward = 0
                 if USE_INTRINSIC:
                     int_reward = algorithm_im.get_reward(i_episode, t, (state, action, reward, next_state), done)
                     TrainerMetadata().log(int_reward, 'int_reward', show_only_last=True, compute_maxmin=True)
+                else:
+                    int_reward = 0
 
                 if done:
                     algorithm_im.scale_annealing()

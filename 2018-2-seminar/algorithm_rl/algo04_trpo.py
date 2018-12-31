@@ -15,6 +15,8 @@ import torch.autograd as autograd
 import torch.optim as optim
 
 import utils_kdm as u
+from utils_ext.kl_divergence import kl_divergence
+from utils_ext.conjugate_gradient import conjugate_gradient
 from utils_kdm.replay_memory import ReplayMemory
 from utils_kdm.trainer_metadata import TrainerMetadata
 
@@ -26,6 +28,7 @@ Transition = namedtuple('Transition', ('state', 'action', 'reward', 'done'))
 
 
 # TODO: 논문 저자는 어떤 Actor Critic 을 썼나?
+# -> 그냥 '적절한' 것을 쓰라고 함
 # 논문 저자:
 # 입력: 상태
 # 출력: 값 = 가우시안 분포를 이루게 하고 평균 뽑기
@@ -36,14 +39,9 @@ Transition = namedtuple('Transition', ('state', 'action', 'reward', 'done'))
 # reinforcement-learning-kr:
 # Actor: 입력->64->64->출력
 # Critic: 입력->64->64->1
-#     gamma = 0.99
 #     lamda = 0.98
-#     hidden = 64
 #     critic_lr = 0.0003
 #     actor_lr = 0.0003
-#     batch_size = 64
-#     l2_rate = 0.001
-#     max_kl = 0.01
 #     clip_param = 0.2
 #
 # OpenAI:
@@ -51,17 +49,8 @@ Transition = namedtuple('Transition', ('state', 'action', 'reward', 'done'))
 # Actor:
 # Critic:
 #     critic_lr = 0.001
-#     steps_per_epoch=4000,
-# epochs=50, gamma=0.99,
-# delta=0.01 (이거 max_kl), vf_lr=0.001,
-# train_v_iters=80,
-# damping_coeff=0.1,
-# cg_iters=10,
-# backtrack_iters=10,
-# backtrack_coeff=0.8,
+# vf_lr=0.001,
 # lam=0.97,
-# max_ep_len=1000,
-# save_freq=10
 class Actor(nn.Module):
 
     def __init__(self, state_size, action_size):
@@ -74,26 +63,29 @@ class Actor(nn.Module):
         self.linear2 = nn.Linear(self.layer_sizes[1], self.layer_sizes[2])
         self.head = nn.Linear(self.layer_sizes[2], self.layer_sizes[3])
 
-        # TODO: 초기화 이해 안 감 -> 공식 레포가 이렇지만 다른 초기화는?
+        # TODO: (개선) 초기화 이해 안 감 -> 공식 레포가 이렇지만 다른 초기화는?
         self.head.weight.data.mul_(0.1)
         self.head.bias.data.mul_(0.0)
 
     def forward(self, x):
-        # TODO: 저자 공식 레포가 tanh지만 다른 거 써볼까
+        # TODO: (개선) 저자 공식 레포가 tanh지만 다른 거 써볼까
         x = torch.tanh(self.linear1(x))
         x = torch.tanh(self.linear2(x))
         # μ의 발음 표현 mu는 아무리 봐도 무 같아서
         # 내가 편하려고 meow로 씀ㅋ
         meow = self.head(x)
 
-        # TODO: logstd 이렇게 반환하면 그냥 0 아닌가? RLKR이 이렇게 함
+        # logstd 이렇게 반환하면 그냥 0 아닌가? RLKR이 이렇게 함
+        # -> 비록 현재는 0 이지만, logstd를 지수함수 씌운 것이 std 변수로 남는다.
+        # -> 이는 추후 그라디언트를 계산할 때 미분 등을 자동으로 연관시켜 할 수 있으므로,
+        # -> 이런 식으로 자동 그래프가 구성되게 만든다.
         logstd = torch.zeros_like(meow)
         std = torch.exp(logstd)
 
-        # TODO: 원본은 logstd도 반환하는데 난 납득하기 전까지 반환 X
-        # TODO: DDPG의 actor와는 다르게 행동을 반환하는 것이 아니라 현재 정책 분포의 평균만을 반환?
-        # 후에 더 처리하나?
-        return meow, std
+        # DDPG의 actor와는 다르게 행동을 반환하는 것이 아니라 현재 정책 분포에 따른 기대값(μ)을 반환
+        # -> 정책 분포의 평균과 표준편차를 반환하여 필요할 땐 정규분포에 의해 action 계산을 하고,
+        # -> 후에 정규분포 특성에 의한 그라디언트 계산이 가능하게 한다.
+        return meow, logstd, std
 
 
 class Critic(nn.Module):
@@ -101,7 +93,7 @@ class Critic(nn.Module):
     def __init__(self, state_size):
         super().__init__()
         self.device = TrainerMetadata().device
-        # TODO: 액션 크기는 안 받는 이유는? Q(s, a) 아닌가?
+        # TODO: (모름) 액션 크기는 안 받는 이유는? Q(s, a) 아닌가?
         self.layer_sizes = [state_size, 64, 64, 1]
 
         self.linear1 = nn.Linear(self.layer_sizes[0], self.layer_sizes[1])
@@ -136,14 +128,7 @@ class TRPO(u.TorchSerializable):
         self.actor = Actor(self.state_size, self.action_size).to(self.device)
         self.critic = Critic(self.state_size).to(self.device)
 
-        # TODO: ZFilter?
-        # pass
-
         # Optimizer
-        self.actor_optimizer = optim.Adam(
-            self.actor.parameters(),
-            lr=self.learning_rate_actor
-        )
         # critic 에만 L2 weight decay 넣음
         self.critic_optimizer = optim.Adam(
             self.critic.parameters(),
@@ -157,15 +142,14 @@ class TRPO(u.TorchSerializable):
         self.register_serializable([
             'self.actor',
             'self.critic',
-            'self.actor_optimizer',
             'self.critic_optimizer',
         ])
 
     def _set_hyper_parameters(self):
-        # TODO: 잘 정하기 공식 레포엔 없나??
+        # TODO: (개선) 잘 정하기 공식 레포엔 없나??
         # Adam 하이퍼 파라미터
-        self.learning_rate_actor = 0.0003
-        self.learning_rate_critic = 0.0003
+        # self.learning_rate_critic = 0.0003
+        self.learning_rate_critic = 0.001
         self.l2_weight_decay = 0.001
 
         # value 함수 학습할 때 전체 스텝 (4000) 을 64개로 잘라서 학습
@@ -178,8 +162,11 @@ class TRPO(u.TorchSerializable):
         # 켤레 기울기법(Conjugate Gradient) 몇 번 돌 것인가
         self.cg_iters = 10
         # line search 최대 몇 번 할 것인가 / 얼마씩 줄여 갈 것인가
-        self.backtrack_iters = 10
+        self.backtrack_iters = 20
         self.backtrack_coeff = 0.8
+        # Conjugate gradient 구할 때 헤시안 행렬 추정하는데,
+        # 이 때 피셔-벡터곱만 하면 불안정해서 결과값에다가 원본에 0.1 곱한거 더해 줌
+        self.damping_coeff = 0.1
 
         # From RLKR
         # KL 다이버전스 한계값 (신뢰 영역 범위)
@@ -196,52 +183,66 @@ class TRPO(u.TorchSerializable):
     def append_sample(self, sar, done):
         state, action, reward = sar
         state, action, reward = u.t_float32(state), u.t_float32(action), u.t_float32(reward)
-        # TODO: 이거 t_uint8로도 할 수 있을텐데 GAE 파트에서 실수 값에 Byte 곱한다고 에러 뿜뿜
+        # FIXME: 이거 t_uint8로도 할 수 있을텐데 GAE 파트에서 실수 값에 Byte 곱한다고 에러 뿜뿜
         done = u.t_float32(done)
         transition = self.transition_structure(state, action, reward, done)
         self.memory.append(transition)
 
     def get_action(self, state):
-        # TODO: 왜 액터에서 바로 안 구하고 뮤랑 표준편차 꺼내서 다시 계산? 모듈화 때문인가?
+        # 왜 액터에서 바로 안 구하고 뮤랑 표준편차 꺼내서 다시 계산? 모듈화 때문인가?
+        # -> 이 알고리즘에서의 actor는 표준분포에 의한 행동을 뽑아내는게 아니라 표준분포 그 자체를 생성한다
+        # -> 생성한 표준 분포를 따라서 행동을 하나 샘플
         state = u.t_from_np_to_float32(state)
-        meow, std = self.actor(state)
+        meow, logstd, std = self.actor(state)
         meow, std = meow.detach(), std.detach()
         action = torch.normal(meow, std).cpu().numpy()
         return action
+
+    def _flip_0_1(self, batch):
+        batch = batch + 1
+        batch[batch > 1] = 0
+        return batch
 
     def _gae(self, r_batch, done_batch, v_batch):
         return_batch = torch.zeros_like(r_batch).to(self.device)
         advantage_batch = torch.zeros_like(r_batch).to(self.device)
 
-        running_return_batch = 0
-        previous_value = 0
-        running_advantage_batch = 0
+        running_return = 0
+        previous_v = 0
+        running_advantage = 0
+
+        # FIXME: 이거 왜 거꾸로?
+        done_batch = self._flip_0_1(done_batch)
 
         for t in reversed(range(0, len(r_batch))):
-            running_return_batch = r_batch[t] + self.gamma * running_return_batch * done_batch[t]
-            running_tderror = r_batch[t] + self.gamma * previous_value * done_batch[t] - \
+            running_return = r_batch[t] + self.gamma * running_return * done_batch[t]
+            running_tderror = r_batch[t] + self.gamma * previous_v * done_batch[t] - \
                               v_batch.data[t]
-            running_advantage_batch = running_tderror + self.gamma * self.gamma * \
-                              running_advantage_batch * done_batch[t]
+            running_advantage = running_tderror + self.gamma * self.gamma * \
+                              running_advantage * done_batch[t]
 
-            return_batch[t] = running_return_batch
-            previous_value = v_batch.data[t]
-            advantage_batch[t] = running_advantage_batch
+            return_batch[t] = running_return
+            previous_v = v_batch.data[t]
+            advantage_batch[t] = running_advantage
 
         advantage_batch = (advantage_batch - advantage_batch.mean()) / advantage_batch.std()
         return return_batch, advantage_batch
 
     def get_critic_loss(self, s_batch, return_batch, advantage_batch):
         critic_loss = nn.MSELoss().to(self.device)
-        # TODO: RLKR 에서는 전체 메모리를 64개씩 랜덤 순서로 훑어가며 학습시킴
-        # TODO: 난 그냥 통째로 (기본 STEPS_PER_EPOCH = 4000개) 때려 박을 예정ㅋ 느리면 바꾸지 모
         v_batch = self.critic(s_batch)
         critic_loss = critic_loss(v_batch, return_batch + advantage_batch)
 
         return critic_loss
 
-    # TODO: 진짜 이 함수는 어디서 튀어나온거야 논문에 눈 씻고 찾아봐도 없음
     def _log_density(self, x, meow, std, logstd):
+        # 확률밀도함수에 log 씌운 것을 반환
+        #
+        # 예를 들어 TRPO에서 그라디언트 계산할 때 정책(a|s),
+        # 즉 확률밀도함수를 이용해서 현재 행동(x)을 했을 확률이 필요하다.
+        # 그런데 이거 그냥 구해서 추후 미분하는 것 보단 애초에 확률밀도함수의 log를 구해서 던지는게
+        # 계산이 쉽다고 한다 (잘 모르겟지만 위키백과가 그럼)
+        # https://ko.wikipedia.org/wiki/%EA%B0%80%EB%8A%A5%EB%8F%84
         var = std.pow(2)
         log_density = -(x - meow).pow(2) / (2 * var) \
                       - 0.5 * math.log(2 * math.pi) - logstd
@@ -250,9 +251,7 @@ class TRPO(u.TorchSerializable):
     # TODO: 진짜 이 함수는 어디서 튀어나온거야 논문에 눈 씻고 찾아봐도 없음
     def _surrogate_loss(self, advantage_batch, s_batch, old_policy, a_batch):
         # TODO: 왜 이거 여기서 다시 하지? 바로 앞에서 했는데
-        meow, std = self.actor(s_batch)
-        # TODO: logstd 이렇게 만들면 그냥 0 아닌가? RLKR이 이렇게 함
-        logstd = torch.zeros_like(meow).to(self.device)
+        meow, logstd, std = self.actor(s_batch)
         new_policy = self._log_density(a_batch, meow, std, logstd)
 
         surrogate = advantage_batch * torch.exp(new_policy - old_policy).to(self.device)
@@ -295,33 +294,23 @@ class TRPO(u.TorchSerializable):
             params.data.copy_(new_param)
             index += params_length
 
-    # TODO: 논문에서 다시 공부하기
-    # TODO: residual_tol 변수 의미
-    # RLKR에서 차용한 걸 다시 차용
-    # from openai baseline code
-    # https://github.com/openai/baselines/blob/master/baselines/common/cg.py
-    def _conjugate_gradient(self, s_batch, loss_grad_data, nsteps=10, residual_tol=1e-10):
-        x = torch.zeros(loss_grad_data.size()).to(self.device)
-        r = loss_grad_data.clone()
-        p = loss_grad_data.clone()
-        rdotr = torch.dot(r, r).to(self.device)
-        for i in range(nsteps):
-            _Avp = self._fisher_vector_product(s_batch, p)
-            alpha = rdotr / torch.dot(p, _Avp).to(self.device)
-            x += alpha * p
-            r -= alpha * _Avp
-            new_rdotr = torch.dot(r, r).to(self.device)
-            betta = new_rdotr / rdotr
-            p = r + betta * p
-            rdotr = new_rdotr
-            if rdotr < residual_tol:
-                break
-        return x
+    def _fisher_vector_product(self, vector_p_with_state_batch):
+        """
+        b=Hx 에서 x를 구하려면 H의 역행렬을 알아야 한다.
+        근데 H의 역행렬 구하기 어렵다.
+        그래서 피셔 벡터곱으로 Hx를 대충 추정해서 넘겨주자.
 
-    # TODO: 논문에서 다시 공부하기
-    def _fisher_vector_product(self, s_batch, p):
+        D_KL
+        ∇D_KL
+        (∇D_KL)^T * x
+        ∇((∇D_KL)^T * x)
+
+        Hx = ∇((∇D_KL(새로운θ|옛날θ))^T * x)
+        """
+        (p, s_batch) = vector_p_with_state_batch
         p.detach()
-        kl = self._kl_divergence(new_actor=self.actor, old_actor=self.actor, s_batch=s_batch)
+        # 왜 같은게 들어가냐면 현재 policy에 대한 다이버전스를 구하는 거라서
+        kl = kl_divergence(new_actor=self.actor, old_actor=self.actor, s_batch=s_batch)
         kl = kl.mean()
         kl_grad = autograd.grad(kl, self.actor.parameters(), create_graph=True)
         kl_grad = self._flat_grad(kl_grad)  # check kl_grad == 0
@@ -330,28 +319,52 @@ class TRPO(u.TorchSerializable):
         kl_hessian_p = autograd.grad(kl_grad_p, self.actor.parameters())
         kl_hessian_p = self._flat_hessian(kl_hessian_p)
 
-        return kl_hessian_p + 0.1 * p
+        return kl_hessian_p + self.damping_coeff * p
 
-    # TODO: 논문에서 다시 공부하기
-    def _kl_divergence(self, new_actor, old_actor, s_batch):
-        meow, std = new_actor(s_batch)
-        # TODO: logstd 이렇게 만들면 그냥 0 아닌가? RLKR이 이렇게 함
-        logstd = torch.zeros_like(meow).to(self.device)
-        meow_old, std_old = old_actor(s_batch)
-        # TODO: logstd 이렇게 만들면 그냥 0 아닌가? RLKR이 이렇게 함
-        logstd_old = torch.zeros_like(meow_old).to(self.device)
-        meow_old = meow_old.detach()
-        std_old = std_old.detach()
-        logstd_old = logstd_old.detach()
+    def _line_search(self, old_loss, loss_grad, step_vector_x, advantage_batch, s_batch, old_policy, a_batch):
+        actor_flat_params = self._flat_params(self.actor)
+        # FIXME: 여기 왜 다시 계산?
+        old_actor = Actor(self.state_size, self.action_size).to(self.device)
+        self._update_model(old_actor, actor_flat_params)
 
-        # kl divergence between old policy and new policy : D( pi_old || pi_new )
-        # pi_old -> mu0, logstd0, std0 / pi_new -> mu, logstd, std
-        # be careful of calculating KL-divergence. It is not symmetric metric
-        kl = logstd_old - logstd + (std_old.pow(2) + (meow_old - meow).pow(2)) / \
-             (2.0 * std.pow(2)) - 0.5
-        return kl.sum(1, keepdim=True)
+        expected_improve = (loss_grad * step_vector_x).sum(0, keepdim=True)
+        expected_improve = expected_improve.cpu().numpy()
+
+        line_search_succeed = False
+        for i in range(self.backtrack_iters):
+            # 라인 서치로 정책 업데이트
+            backtrack_ratio = self.backtrack_coeff ** i
+            constraint_params = actor_flat_params + backtrack_ratio * step_vector_x
+            self._update_model(self.actor, constraint_params)
+
+            # 바꾼 actor를 기반으로 다시 평균(log정책(a|s)*A) 구해봄
+            constraint_loss = self._surrogate_loss(advantage_batch, s_batch, old_policy.detach(), a_batch)
+            loss_improve = (constraint_loss - old_loss).detach().cpu().numpy()
+            weighted_expected_improve = backtrack_ratio * expected_improve
+            kl = kl_divergence(new_actor=self.actor, old_actor=old_actor, s_batch=s_batch)
+            kl = kl.mean()
+
+            TrainerMetadata().log(kl, 'KL', 'current_kl', compute_maxmin=True)
+            TrainerMetadata().log(self.max_kl, 'KL', 'max_kl')
+            TrainerMetadata().log(loss_improve / weighted_expected_improve, 'real / expected (improve)', 'real_ratio', compute_maxmin=True)
+            TrainerMetadata().log(0.5, 'real / expected (improve)', 'threshold ')
+            # TrainerMetadata().log(expected_improve, 'expected_improve', compute_maxmin=True)
+
+            # see https://en.wikipedia.org/wiki/Backtracking_line_search
+            # TODO: 0.5 인 이유? 1.0 보다 커야 개선된 것 아닌가
+            if kl < self.max_kl and (loss_improve / weighted_expected_improve) > 0.5:
+                line_search_succeed = True
+                break
+
+        if not line_search_succeed:
+            actor_flat_params = self._flat_params(old_actor)
+            self._update_model(self.actor, actor_flat_params)
+            print('policy update does not impove the surrogate')
 
     def train_model(self):
+        # 알고리즘 줄 번호는 OpenAI 기준
+        # 줄 1~3 = 초기화
+        # 줄 4 = 현재 정책 π로 trajectory 모으기
         transitions = self.memory
         # random.shuffle(transitions)
         sar_batch = self.transition_structure(*zip(*transitions))
@@ -360,23 +373,60 @@ class TRPO(u.TorchSerializable):
         r_batch = torch.stack(sar_batch.reward).to(self.device)
         done_batch = torch.stack(sar_batch.done).to(self.device)
 
-        v_batch = self.critic(s_batch)
-
-        # FIXME: 그냥 이 밑으론 일단 돌려 보고 다시 이해해야 될 듯... 하나도 모르겠음
-        # FIXME: 그냥 이 밑으론 일단 돌려 보고 다시 이해해야 될 듯... 하나도 모르겠음
-        # FIXME: 그냥 이 밑으론 일단 돌려 보고 다시 이해해야 될 듯... 하나도 모르겠음
-        # FIXME: 그냥 이 밑으론 일단 돌려 보고 다시 이해해야 될 듯... 하나도 모르겠음
-        # FIXME: 그냥 이 밑으론 일단 돌려 보고 다시 이해해야 될 듯... 하나도 모르겠음
-        # 1단계: GAE로 return과 advantage 구하기
+        # 줄 5 = rewards-to-go (R) 구하기
+        # 줄 6 = 현재 가치 함수 (V)를 기반으로 추정 advantage (A) 구하기
         # TODO: GAE 나중에 공부하자 일단은 갖다 씀
+        v_batch = self.critic(s_batch)
         return_batch, advantage_batch = self._gae(r_batch, done_batch, v_batch)
 
-        # 2단계: Critic 최적화
+        # 줄 7 = 정책 그라디언트 구하기
+        # 그라디언트 = '각 정책에 대한' 평균(∇log정책(a|s)*A)
+        # 정책(a|s) ~~> 현재 정책에서 해당 행동을 할 확률
+        # log정책(a|s)
+        # 평균(log정책(a|s)*A)
+        # g = '각 정책에 대한' 평균(∇log정책(a|s)*A)
+        meow, logstd, std = self.actor(s_batch)
+        old_policy = self._log_density(a_batch, meow, std, logstd)
+
+        # 아래 3줄이 처음에 이해가 안 갔다
+        # - 왜 바로 minimize() 호출 안 하고 굳이 autograd 패키지를 써서 gradient를 구하는가?
+        # -> DDPG에서는 그냥 그라디언트 최소화만 하면 됐지만, 여기서는 먼저 그라디언트 변수를 구하고,
+        #    그걸 이용해서 다시 conjugate gradient algorithm 으로 차례차례 나아간다.
+        #    왜냐면 애초에 이 논문의 목적이 그냥 파라미터 공간에서 그라디언트 때려버리는 게 아니라
+        #    그라디언트 때린 거가 정책 공간에서 얼마나 변했는지 검사 후 적용하려고 하는 것이기 때문
+        # - surrogate_loss (대리 loss) 란 무엇이고,
+        #   왜 바로 아래 줄에서는 의미 없이 같은 policy 2개 사이의 차이를 계산에서 advantage에 곱하는가?
+        # -> 원래 우리가 구하고자 하는 방향은 advantage를 최대화 하는 방향 (그라디언트 구하기)
+        #    따라서 그냥 advantage 만으로 그라디언트 구해서 최대화 하면 됨
+        #    그런데 저 밑에 코드에서 line search 하면서 조금 방향을 바꿔보려고 함
+        #    그리고 조금 방향 바뀌었을 때와 원래 방향일 때 최종 loss가 어떻게 변하는지 보려고 함
+        #    따라서 원래의 방향을 미리 알아둬야 하고, 이를 위해 미리 구해두는 것
+        loss = self._surrogate_loss(advantage_batch, s_batch, old_policy.detach(), a_batch)
+        loss_grad = autograd.grad(loss, self.actor.parameters())
+        loss_grad = self._flat_grad(loss_grad)
+
+        # 줄 8 = 켤레 기울기법 적용해서 x 추정하기
+        # x = H의 역행렬 * 그라디언트
+        # 결론으로 구한 x는 우리가 어디로 가야 할 지 알려주는 방향 = step_direction_x
+        step_direction_x = conjugate_gradient(self._fisher_vector_product, s_batch, loss_grad.data, cg_iters=self.cg_iters)
+
+        # 줄 9 = 백트래킹 방법으로 정책 업데이트하기
+        # 새로운 파라미터 = 파라미터 + sqrt(2*최대 kl 크기 제한 / H의 이차형식) * x
+        # xhx = (x^-1)(Hx)
+        # 크기: sqrt(2*최대 kl 크기 제한 / (x^-1)(Hx))
+        # 방향벡터: sqrt(2*최대 kl 크기 제한 / (x^-1)(Hx)) * x
+        xhx = (step_direction_x * self._fisher_vector_product((step_direction_x, s_batch))).sum(0, keepdim=True)
+        step_size_x = torch.sqrt((2 * self.max_kl) / xhx).to(self.device)
+        step_vector_x = step_size_x * step_direction_x
+        self._line_search(loss, loss_grad, step_vector_x, advantage_batch, s_batch, old_policy, a_batch)
+
+        # 줄 10 = 가치 함수 MSE로 경사 하강법 최적화
         n = len(s_batch)
         arr = np.arange(n)
-
         for epoch in range(self.train_v_iters):
             np.random.shuffle(arr)
+            critic_loss = 0
+
             for i in range(n // self.batch_size):
                 batch_index = arr[self.batch_size * i: self.batch_size * (i + 1)]
                 batch_index = u.t_long(batch_index)
@@ -388,60 +438,4 @@ class TRPO(u.TorchSerializable):
                 critic_loss.backward()
                 self.critic_optimizer.step()
 
-        # 3단계: loss의 그라디언트를 구하고 KL의 헤시안을 구하자
-        meow, std = self.actor(s_batch)
-        # TODO: logstd 이렇게 만들면 그냥 0 아닌가? RLKR이 이렇게 함
-        logstd = torch.zeros_like(meow).to(self.device)
-        old_policy = self._log_density(a_batch, meow, std, logstd)
-        loss = self._surrogate_loss(advantage_batch, s_batch, old_policy.detach(), a_batch)
-        # TODO: DDPG에서는 그냥 mean 때린거 바로 minimize 했는데 왜 여기선 autograd로?
-        loss_grad = autograd.grad(loss, self.actor.parameters())
-        loss_grad = self._flat_grad(loss_grad)
-        step_dir = self._conjugate_gradient(s_batch, loss_grad.data, nsteps=self.cg_iters)
-        loss = loss.detach().cpu().numpy()
-
-        # 4단계: 스텝 방향, 스텝 크기를 구해서 스텝 벡터를 구하자 (방향 * 크기)
-        actor_flat_params = self._flat_params(self.actor)
-        shs = 0.5 * (step_dir * self._fisher_vector_product(s_batch, step_dir)).sum(0, keepdim=True)
-
-        step_size = 1 / torch.sqrt(shs / self.max_kl).to(self.device)
-        full_step = step_size * step_dir
-
-        # 5단계: 백트래킹 line search를 n번 실행
-        old_actor = Actor(self.state_size, self.action_size).to(self.device)
-        self._update_model(old_actor, actor_flat_params)
-        expected_improve = (loss_grad * full_step).sum(0, keepdim=True).to(self.device)
-        expected_improve = expected_improve.cpu().numpy()
-
-        line_search_succeed = False
-        for i in range(self.backtrack_iters):
-            backtrack_ratio = self.backtrack_coeff ** i
-            constraint_params = actor_flat_params + backtrack_ratio * full_step
-            self._update_model(self.actor, constraint_params)
-            constraint_loss = self._surrogate_loss(advantage_batch, s_batch, old_policy.detach(), a_batch)
-            constraint_loss = constraint_loss.detach().cpu().numpy()
-            loss_improve = constraint_loss - loss
-            expected_improve *= backtrack_ratio
-            kl = self._kl_divergence(new_actor=self.actor, old_actor=old_actor, s_batch=s_batch)
-            kl = kl.mean()
-
-            # print('kl: {:.4f}  loss improve: {:.4f}  expected improve: {:.4f}  '
-            #       'number of line search: {}'
-            #       .format(kl.data.numpy(), loss_improve, expected_improve[0], i))
-            TrainerMetadata().log(kl, 'KL', 'current_kl', compute_maxmin=True)
-            TrainerMetadata().log(self.max_kl, 'KL', 'max_kl')
-            TrainerMetadata().log(loss_improve / expected_improve, 'real / expected (improve)', 'real_ratio', compute_maxmin=True)
-            TrainerMetadata().log(0.5, 'real / expected (improve)', 'threshold ')
-            # TrainerMetadata().log(expected_improve, 'expected_improve', compute_maxmin=True)
-
-            # see https://en.wikipedia.org/wiki/Backtracking_line_search
-            # TODO: 0.5 인 이유?
-            if kl < self.max_kl and (loss_improve / expected_improve) > 0.5:
-                line_search_succeed = True
-                break
-
-        if not line_search_succeed:
-            actor_flat_params = self._flat_params(old_actor)
-            self._update_model(self.actor, actor_flat_params)
-            print('policy update does not impove the surrogate')
-
+            TrainerMetadata().log(critic_loss, 'critic_loss', show_only_last=True, compute_maxmin=True)
