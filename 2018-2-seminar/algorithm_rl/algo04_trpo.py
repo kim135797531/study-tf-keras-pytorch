@@ -4,20 +4,22 @@
 #
 # 참조: https://github.com/reinforcement-learning-kr/pg_travel/blob/master/mujoco/agent/trpo_gae.py
 #
+
+import copy
 import math
-import random
 from collections import namedtuple
 
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn.utils.convert_parameters import parameters_to_vector, vector_to_parameters
 import torch.autograd as autograd
 import torch.optim as optim
 
 import utils_kdm as u
 from utils_ext.kl_divergence import kl_divergence
 from utils_ext.conjugate_gradient import conjugate_gradient
-from utils_kdm.replay_memory import ReplayMemory
 from utils_kdm.trainer_metadata import TrainerMetadata
 
 
@@ -27,7 +29,6 @@ from utils_kdm.trainer_metadata import TrainerMetadata
 Transition = namedtuple('Transition', ('state', 'action', 'reward', 'done'))
 
 
-# TODO: 논문 저자는 어떤 Actor Critic 을 썼나?
 # -> 그냥 '적절한' 것을 쓰라고 함
 # 논문 저자:
 # 입력: 상태
@@ -36,21 +37,17 @@ Transition = namedtuple('Transition', ('state', 'action', 'reward', 'done'))
 # 신경망이 로그정규분포를 갖게
 # => 따라서 정책이 정규분포(평균=신경망, 표준편차=exp(로그표준분포))를 갖게
 #
-# reinforcement-learning-kr:
 # Actor: 입력->64->64->출력
 # Critic: 입력->64->64->1
-#     lamda = 0.98
-#     critic_lr = 0.0003
-#     actor_lr = 0.0003
-#     clip_param = 0.2
+# Critic Optimizer = L-BFGS (이차 미분)
+# => Learning Rate = 1 (왜냐면 이건 제대로 된 최적기라..)
+# => L2 decay = 0.001 * (신경망 내부 변수 제곱을 전부 합한 것)
+#
+# reinforcement-learning-kr:
+#     lambda = 0.98
 #
 # OpenAI:
-#
-# Actor:
-# Critic:
-#     critic_lr = 0.001
-# vf_lr=0.001,
-# lam=0.97,
+# lam=0.97, -> GAE
 class Actor(nn.Module):
 
     def __init__(self, state_size, action_size):
@@ -69,6 +66,8 @@ class Actor(nn.Module):
 
     def forward(self, x):
         # TODO: (개선) 저자 공식 레포가 tanh지만 다른 거 써볼까
+        # x = F.relu(self.linear1(x))
+        # x = F.relu(self.linear2(x))
         x = torch.tanh(self.linear1(x))
         x = torch.tanh(self.linear2(x))
         # μ의 발음 표현 mu는 아무리 봐도 무 같아서
@@ -93,7 +92,7 @@ class Critic(nn.Module):
     def __init__(self, state_size):
         super().__init__()
         self.device = TrainerMetadata().device
-        # TODO: (모름) 액션 크기는 안 받는 이유는? Q(s, a) 아닌가?
+        # TODO: (GAE 모름) 액션 크기는 안 받는 이유는? Q(s, a) 아닌가?
         self.layer_sizes = [state_size, 64, 64, 1]
 
         self.linear1 = nn.Linear(self.layer_sizes[0], self.layer_sizes[1])
@@ -106,6 +105,8 @@ class Critic(nn.Module):
 
     def forward(self, x):
         # TODO: 저자 공식 레포가 tanh지만 다른 거 써볼까
+        # x = F.relu(self.linear1(x))
+        # x = F.relu(self.linear2(x))
         x = torch.tanh(self.linear1(x))
         x = torch.tanh(self.linear2(x))
         v = self.head(x)
@@ -165,7 +166,7 @@ class TRPO(u.TorchSerializable):
         self.backtrack_iters = 20
         self.backtrack_coeff = 0.8
         # Conjugate gradient 구할 때 헤시안 행렬 추정하는데,
-        # 이 때 피셔-벡터곱만 하면 불안정해서 결과값에다가 원본에 0.1 곱한거 더해 줌
+        # 이 때 피셔-벡터곱만 하면 불안정해서 결과값에다가 원본에 0.1 곱한거 더해 줌 (단위행렬)
         self.damping_coeff = 0.1
 
         # From RLKR
@@ -180,8 +181,8 @@ class TRPO(u.TorchSerializable):
     def memory_clear(self):
         self.memory.clear()
 
-    def append_sample(self, sar, done):
-        state, action, reward = sar
+    def append_sample(self, sars, done):
+        state, action, reward, next_state = sars
         state, action, reward = u.t_float32(state), u.t_float32(action), u.t_float32(reward)
         # FIXME: 이거 t_uint8로도 할 수 있을텐데 GAE 파트에서 실수 값에 Byte 곱한다고 에러 뿜뿜
         done = u.t_float32(done)
@@ -211,7 +212,7 @@ class TRPO(u.TorchSerializable):
         previous_v = 0
         running_advantage = 0
 
-        # FIXME: 이거 왜 거꾸로?
+        # FIXME: (GAE 모름) 이거 왜 거꾸로?
         done_batch = self._flip_0_1(done_batch)
 
         for t in reversed(range(0, len(r_batch))):
@@ -248,51 +249,10 @@ class TRPO(u.TorchSerializable):
                       - 0.5 * math.log(2 * math.pi) - logstd
         return log_density.sum(1, keepdim=True).to(self.device)
 
-    # TODO: 진짜 이 함수는 어디서 튀어나온거야 논문에 눈 씻고 찾아봐도 없음
-    def _surrogate_loss(self, advantage_batch, s_batch, old_policy, a_batch):
-        # TODO: 왜 이거 여기서 다시 하지? 바로 앞에서 했는데
-        meow, logstd, std = self.actor(s_batch)
-        new_policy = self._log_density(a_batch, meow, std, logstd)
-
-        surrogate = advantage_batch * torch.exp(new_policy - old_policy).to(self.device)
-        return surrogate.mean()
-
-    # TODO: 이것도 베껴오긴 했는데, list로 바꿨다가 다시 cat 하지 말고 바로 하는 방법?
-    def _flat_grad(self, grads):
-        grad_flatten = []
-        for grad in grads:
-            grad_flatten.append(grad.view(-1))
-        grad_flatten = torch.cat(grad_flatten).to(self.device)
-        return grad_flatten
-
-    # TODO: 이것도 베껴오긴 했는데, list로 바꿨다가 다시 cat 하지 말고 바로 하는 방법?
-    def _flat_hessian(self, hessians):
-        hessians_flatten = []
-        for hessian in hessians:
-            hessians_flatten.append(hessian.contiguous().view(-1))
-        # TODO: 뒤에 data 붙여야 하나 (torch.cat().data?)
-        hessians_flatten = torch.cat(hessians_flatten).to(self.device)
-        return hessians_flatten
-
-    # TODO: 이것도 베껴오긴 했는데, list로 바꿨다가 다시 cat 하지 말고 바로 하는 방법?
-    def _flat_params(self, model):
-        params = []
-        for param in model.parameters():
-            params.append(param.data.view(-1))
-        params_flatten = torch.cat(params).to(self.device)
-        return params_flatten
-
-    # TODO: 이것도 베껴오긴 했는데, list로 바꿨다가 다시 cat 하지 말고 바로 하는 방법?
-    # TODO: 결국 위에 params 갖고 노는 것들은 모델 파라미터를 갱신을 위한 거 였구나.
-    # TODO: 이렇게 빼서 안 하고 아름답게 못 하나? CPU<->GPU 통신 불탄다
-    def _update_model(self, model, new_params):
-        index = 0
-        for params in model.parameters():
-            params_length = len(params.view(-1))
-            new_param = new_params[index: index + params_length]
-            new_param = new_param.view(params.size())
-            params.data.copy_(new_param)
-            index += params_length
+    def _surrogate_loss(self, old_policy, new_policy, advantage_batch):
+        # TODO: new_policy detach 해도 되나?
+        surrogate = advantage_batch * torch.exp(new_policy - old_policy.detach())
+        return surrogate.mean().to(self.device)
 
     def _fisher_vector_product(self, vector_p_with_state_batch):
         """
@@ -313,32 +273,36 @@ class TRPO(u.TorchSerializable):
         kl = kl_divergence(new_actor=self.actor, old_actor=self.actor, s_batch=s_batch)
         kl = kl.mean()
         kl_grad = autograd.grad(kl, self.actor.parameters(), create_graph=True)
-        kl_grad = self._flat_grad(kl_grad)  # check kl_grad == 0
+        kl_grad = parameters_to_vector(kl_grad)  # check kl_grad == 0
 
         kl_grad_p = (kl_grad * p).sum()
         kl_hessian_p = autograd.grad(kl_grad_p, self.actor.parameters())
-        kl_hessian_p = self._flat_hessian(kl_hessian_p)
+        kl_hessian_p = parameters_to_vector(kl_hessian_p)
 
         return kl_hessian_p + self.damping_coeff * p
 
     def _line_search(self, old_loss, loss_grad, step_vector_x, advantage_batch, s_batch, old_policy, a_batch):
-        actor_flat_params = self._flat_params(self.actor)
-        # FIXME: 여기 왜 다시 계산?
-        old_actor = Actor(self.state_size, self.action_size).to(self.device)
-        self._update_model(old_actor, actor_flat_params)
+        old_actor = copy.deepcopy(self.actor)
 
+        actor_flat_params = parameters_to_vector(self.actor.parameters())
         expected_improve = (loss_grad * step_vector_x).sum(0, keepdim=True)
         expected_improve = expected_improve.cpu().numpy()
 
-        line_search_succeed = False
+        i, line_search_succeed = -1, False
         for i in range(self.backtrack_iters):
             # 라인 서치로 정책 업데이트
             backtrack_ratio = self.backtrack_coeff ** i
             constraint_params = actor_flat_params + backtrack_ratio * step_vector_x
-            self._update_model(self.actor, constraint_params)
+            vector_to_parameters(constraint_params, self.actor.parameters())
 
             # 바꾼 actor를 기반으로 다시 평균(log정책(a|s)*A) 구해봄
-            constraint_loss = self._surrogate_loss(advantage_batch, s_batch, old_policy.detach(), a_batch)
+            meow, logstd, std = self.actor(s_batch)
+            new_policy = self._log_density(a_batch, meow, std, logstd)
+            constraint_loss = self._surrogate_loss(
+                old_policy=old_policy,
+                new_policy=new_policy,
+                advantage_batch=advantage_batch
+            )
             loss_improve = (constraint_loss - old_loss).detach().cpu().numpy()
             weighted_expected_improve = backtrack_ratio * expected_improve
             kl = kl_divergence(new_actor=self.actor, old_actor=old_actor, s_batch=s_batch)
@@ -352,13 +316,15 @@ class TRPO(u.TorchSerializable):
 
             # see https://en.wikipedia.org/wiki/Backtracking_line_search
             # TODO: 0.5 인 이유? 1.0 보다 커야 개선된 것 아닌가
+            # 일단 Armijo used ​1⁄2 for both c and tau in a paper he published in 1966
             if kl < self.max_kl and (loss_improve / weighted_expected_improve) > 0.5:
                 line_search_succeed = True
                 break
 
+        TrainerMetadata().console_log('KL_iter', i)
+
         if not line_search_succeed:
-            actor_flat_params = self._flat_params(old_actor)
-            self._update_model(self.actor, actor_flat_params)
+            self.actor = copy.deepcopy(old_actor)
             print('policy update does not impove the surrogate')
 
     def train_model(self):
@@ -375,7 +341,7 @@ class TRPO(u.TorchSerializable):
 
         # 줄 5 = rewards-to-go (R) 구하기
         # 줄 6 = 현재 가치 함수 (V)를 기반으로 추정 advantage (A) 구하기
-        # TODO: GAE 나중에 공부하자 일단은 갖다 씀
+        # TODO: (GAE 모름) 나중에 공부하자 일단은 갖다 씀
         v_batch = self.critic(s_batch)
         return_batch, advantage_batch = self._gae(r_batch, done_batch, v_batch)
 
@@ -389,11 +355,13 @@ class TRPO(u.TorchSerializable):
         old_policy = self._log_density(a_batch, meow, std, logstd)
 
         # 아래 3줄이 처음에 이해가 안 갔다
+        #
         # - 왜 바로 minimize() 호출 안 하고 굳이 autograd 패키지를 써서 gradient를 구하는가?
         # -> DDPG에서는 그냥 그라디언트 최소화만 하면 됐지만, 여기서는 먼저 그라디언트 변수를 구하고,
         #    그걸 이용해서 다시 conjugate gradient algorithm 으로 차례차례 나아간다.
         #    왜냐면 애초에 이 논문의 목적이 그냥 파라미터 공간에서 그라디언트 때려버리는 게 아니라
         #    그라디언트 때린 거가 정책 공간에서 얼마나 변했는지 검사 후 적용하려고 하는 것이기 때문
+        #
         # - surrogate_loss (대리 loss) 란 무엇이고,
         #   왜 바로 아래 줄에서는 의미 없이 같은 policy 2개 사이의 차이를 계산에서 advantage에 곱하는가?
         # -> 원래 우리가 구하고자 하는 방향은 advantage를 최대화 하는 방향 (그라디언트 구하기)
@@ -401,9 +369,13 @@ class TRPO(u.TorchSerializable):
         #    그런데 저 밑에 코드에서 line search 하면서 조금 방향을 바꿔보려고 함
         #    그리고 조금 방향 바뀌었을 때와 원래 방향일 때 최종 loss가 어떻게 변하는지 보려고 함
         #    따라서 원래의 방향을 미리 알아둬야 하고, 이를 위해 미리 구해두는 것
-        loss = self._surrogate_loss(advantage_batch, s_batch, old_policy.detach(), a_batch)
+        loss = self._surrogate_loss(
+            old_policy=old_policy,
+            new_policy=old_policy,
+            advantage_batch=advantage_batch
+        )
         loss_grad = autograd.grad(loss, self.actor.parameters())
-        loss_grad = self._flat_grad(loss_grad)
+        loss_grad = parameters_to_vector(loss_grad)
 
         # 줄 8 = 켤레 기울기법 적용해서 x 추정하기
         # x = H의 역행렬 * 그라디언트

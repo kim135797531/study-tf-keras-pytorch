@@ -30,7 +30,6 @@ class RLAgent(u.TorchSerializable):
 
         # 기본 설정
         self.state_size, self.action_size = state_size, action_size
-        # TODO: 정규화된 입력인지 검사 문구 넣고 range 빼기
         self.action_low, self.action_high = action_range
 
         self.algorithm_im, self.algorithm_rl = algorithm_im, algorithm_rl
@@ -46,17 +45,29 @@ class RLAgent(u.TorchSerializable):
     def _set_hyper_parameters(self):
         pass
 
+    def start_epoch(self):
+        self.algorithm_rl.actor.eval()
+        self.algorithm_rl.critic.eval()
+        self.algorithm_rl.memory_clear()
+
+    def finish_epoch(self):
+        self.algorithm_rl.actor.train()
+        self.algorithm_rl.critic.train()
+        self.train_model()
+
+    def append_sample(self, sars, done):
+        self.algorithm_rl.append_sample(sars, done)
+
     def get_action(self, state):
         return self.algorithm_rl.get_action(state)
 
-    """
-    def train_model(self, i_episode, current_step, current_sars, current_done):
-        s, a, ext_reward, next_s = current_sars
+    def get_weighted_reward(self, i_epoch, current_step, current_sars, current_done):
+        current_state, current_action, ext_reward, next_state = current_sars
         TrainerMetadata().log(ext_reward, 'ext_reward', show_only_last=True, compute_maxmin=True)
 
         int_reward = 0
         if self.use_intrinsic:
-            int_reward = self.algorithm_im.get_reward(i_episode, current_step, current_sars, current_done)
+            int_reward = self.algorithm_im.get_reward(i_epoch, current_step, current_sars, current_done)
             TrainerMetadata().log(int_reward, 'int_reward', show_only_last=True, compute_maxmin=True)
 
         if current_done:
@@ -65,9 +76,8 @@ class RLAgent(u.TorchSerializable):
         int_ext_reward, weighted_int, weighted_ext = self.algorithm_im.weighted_reward(int_reward, ext_reward)
         TrainerMetadata().log(int_ext_reward, 'int_ext_reward', show_only_last=True, compute_maxmin=True)
 
-        current_sars = (s, a, int_ext_reward, next_s)
-        self.algorithm_rl.train_model(current_sars, current_done)
-    """
+        return int_ext_reward
+
     def train_model(self):
         self.algorithm_rl.train_model()
 
@@ -87,7 +97,7 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '30_'
+    VIZ_ENV_NAME = '99_'
 
     # 2. 저장 관련 설정
     VERSION = 1
@@ -97,14 +107,14 @@ if __name__ == "__main__":
 
     # 3. 실험 환경 관련 설정
     GYM_ENV = 'Swimmer-v2'
-    RENDER = True
+    RENDER = False
     LOG_INTERVAL = 1
-    EPISODES = 30000
-    # STEPS_PER_EPOCH = 4000  # From OpenAI
-    STEPS_PER_EPOCH = 4000
+    EPOCHS = 100000
+    MAX_EPISODES = 30000
+    STEPS_PER_EPOCH = 4000  # From OpenAI
 
     # 4. 알고리즘 설정
-    USE_INTRINSIC = True
+    USE_INTRINSIC = False
 
     #####################
     # 객체 구성
@@ -151,6 +161,12 @@ if __name__ == "__main__":
             'int_reward',
             'ext_reward',
             'int_ext_reward',
+        ],
+        console_log_order=[
+            'Epoch',
+            'Score',
+            'KL_iter',
+            'Time',
         ]
     )
 
@@ -160,70 +176,48 @@ if __name__ == "__main__":
     # TODO: 도대체 running_state란?
     running_state = ZFilter((state_size,), clip=5)
 
-    # TODO: iter 변수 만들고 resume 가능하게
-    for iter in range(100000):
+    # TODO: i_epoch 변수 만들고 resume 가능하게
+    for i_epoch in range(EPOCHS):
         TrainerMetadata().start_episode()
-        # TODO: iter부터 시간 측정?
-        agent.algorithm_rl.actor.eval()
-        agent.algorithm_rl.critic.eval()
-        # TODO: TRPO에도 메모리가 필요하구나
-        agent.algorithm_rl.memory_clear()
+        agent.start_epoch()
 
-        # TODO: global_step 너무 더러운데..
-        global_step = 0
+        step_in_epoch = 0
         # 최대 에피소드 수만큼 돌린다
-        for i_episode in range(0, EPISODES):
-
+        for i_episode in range(0, MAX_EPISODES):
             state = env.reset()
             state = running_state(state)
             score = u.t_float32(0)
 
             # 각 에피소드당 환경에 정의된 최대 스텝 수만큼 돌린다
             # 단 그 전에 환경에서 정의된 종료 상태(done)가 나오면 거기서 끝낸다
-            for t in range(env.spec.max_episode_steps):
+            for i_step in range(env.spec.max_episode_steps):
                 TrainerMetadata().start_step()
 
                 action = agent.get_action(state)
                 next_state, reward, done, _ = env.step(action)
                 next_state = running_state(next_state)
 
-                TrainerMetadata().log(reward, 'ext_reward', show_only_last=True, compute_maxmin=True)
+                sars = (state, action, reward, next_state)
+                int_ext_reward = agent.get_weighted_reward(i_epoch, step_in_epoch, sars, done)
 
-                if USE_INTRINSIC:
-                    int_reward = algorithm_im.get_reward(i_episode, t, (state, action, reward, next_state), done)
-                    TrainerMetadata().log(int_reward, 'int_reward', show_only_last=True, compute_maxmin=True)
-                else:
-                    int_reward = 0
-
-                if done:
-                    algorithm_im.scale_annealing()
-
-                int_ext_reward, weighted_int, weighted_ext = algorithm_im.weighted_reward(int_reward, reward)
-                TrainerMetadata().log(int_ext_reward, 'int_ext_reward', show_only_last=True, compute_maxmin=True)
-
-                sar = (state, action, int_ext_reward)
-                agent.algorithm_rl.append_sample(sar, done)
+                sars = (state, action, int_ext_reward, next_state)
+                agent.append_sample(sars, done)
 
                 score += reward
                 state = next_state
 
                 env.render() if RENDER else None
                 TrainerMetadata().finish_step()
-                global_step += 1
-                if done or global_step == STEPS_PER_EPOCH:
+                step_in_epoch += 1
+                if done or step_in_epoch == STEPS_PER_EPOCH:
                     break
 
-            # TODO: 매 에피소드당 스코어 말고 한 iter 당으로 평균 내기?
             TrainerMetadata().log(score, 'score', compute_maxmin=True)
-
-            if global_step == STEPS_PER_EPOCH:
+            if step_in_epoch == STEPS_PER_EPOCH:
                 break
 
-        agent.algorithm_rl.actor.train()
-        agent.algorithm_rl.critic.train()
-        agent.train_model()
-
-        TrainerMetadata().finish_episode(iter)
+        agent.finish_epoch()
+        TrainerMetadata().finish_episode(i_epoch)
 
         if IS_SAVE:
             TrainerMetadata().save()

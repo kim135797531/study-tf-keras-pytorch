@@ -32,7 +32,8 @@ class Drawer:
         # 일단 더미 데이터로 각각 한 번씩 호출함으로서 그래프 창들 순서대로 초기화
         for win in visdom_order:
             win = self._abbreviate_win_name(env, win)
-            self.viz.line(X=np.array([0]), Y=np.array([0]), win=win, update='append', opts={'title': win})
+            self.viz.line(X=np.array([0]), Y=np.array([0]), name='temp_for_order', win=win, update='append', opts={'title': win})
+            # self.viz.line(X=np.array([0]), Y=np.array([0]), name='temp_for_order', win=win, update='remove')
 
     def draw_line(self, y, x=None, x_auto_increment=None, interval=None, env=None, win=None, variable=None):
         if x is None or x == 0:

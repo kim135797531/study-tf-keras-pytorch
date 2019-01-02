@@ -54,6 +54,9 @@ class TrainerMetadata(TorchSerializable, Singleton):
             'agent',
         ])
 
+        cls.console_indicators = dict()
+        cls.console_log_order = list()
+
     @property
     def device(cls):
         return ManageDevice().get(call_from='TrainerMetadata')
@@ -65,7 +68,8 @@ class TrainerMetadata(TorchSerializable, Singleton):
               force_cpu=False,
               log_interval=1,
               save_full_path=__file__,
-              visdom_order=None):
+              visdom_order=None,
+              console_log_order=None):
         cls.viz = viz
         cls.checkpoint = checkpoint
         cls.agent = agent
@@ -91,8 +95,11 @@ class TrainerMetadata(TorchSerializable, Singleton):
         cls.log_interval = log_interval
         cls.save_full_path = save_full_path
 
-        if type(visdom_order) is list:
+        if visdom_order is not None and type(visdom_order) is list:
             viz.set_visdom_order(viz.default_env, visdom_order)
+
+        if console_log_order is not None and type(console_log_order) is list:
+            cls.console_log_order.extend(console_log_order)
 
         ManageDevice().set(force_cpu, call_from='TrainerMetadata')
 
@@ -100,7 +107,6 @@ class TrainerMetadata(TorchSerializable, Singleton):
         ManageDevice().set(force_cpu, call_from='TrainerMetadata')
 
     def log(cls, value=0, indicator='default_win', variable='default_var', interval=1, show_only_last=True, compute_maxmin=False):
-        # TODO: 저장할 때 value의 타입이 Tensor면 .item() 해서 저장하는게 빠르려나?
         value = u.maybe_float(value)
         if cls.global_step % interval == 0:
             if show_only_last:
@@ -115,6 +121,12 @@ class TrainerMetadata(TorchSerializable, Singleton):
             if compute_maxmin:
                 # 한 에피소드 당 변수의 최대/평균/최소 등을 계산하기 위해 저장
                 cls._temp_for_maxmin_indicators[indicator][variable].append(value)
+
+    def console_log(cls, name, value):
+        cls.console_indicators[name] = value
+        # 명시적으로 log 요청했는데도 order에 없는 경우, order 맨 뒤에 추가
+        if name not in cls.console_log_order:
+            cls.console_log_order.append(name)
 
     def save(cls):
         # state_dict 구성 속도가 느리므로 필요할 때만 구성
@@ -157,6 +169,18 @@ class TrainerMetadata(TorchSerializable, Singleton):
     def finish_step(cls):
         pass
 
+    def _fill_if_empty(cls, format_str, name, value):
+        if name not in cls.console_indicators:
+            cls.console_indicators[name] = format_str.format(value)
+
+    def _fill_default_console_indicators(cls):
+        cls._fill_if_empty('{}', 'Epoch', cls.current_epoch)
+        cls._fill_if_empty('{:.2f}', 'Score', u.maybe_float(cls.indicators['score']['default_var'][-1]))
+        cls._fill_if_empty('{:.2f}', 'Time', time.time() - cls.start_time)
+
+        for name in cls.console_log_order:
+            cls._fill_if_empty('{}', name, 'N/A')
+
     def finish_episode(cls, i_episode):
         cls.current_epoch = i_episode
 
@@ -176,15 +200,12 @@ class TrainerMetadata(TorchSerializable, Singleton):
                 # 맨 마지막 값은 나중에 불러오기 할 때 개략적으로나마 표시해 주기 위해
                 # cls.indicators[indicator_name][variable_name].append(variable_sequence[-1])
 
-        if i_episode % cls.log_interval == 0:
-            # TODO: score는 그냥 전부 있다고 가정하고 변수화?
-            last_score = u.maybe_float(cls.indicators['score']['default_var'][-1])
-            memory_len = len(cls.agent.algorithm_rl.memory) \
-                if len(cls.indicators['memory_len']['default_var']) > 0 \
-                else 0
+        cls._fill_default_console_indicators()
 
-            print('Episode {}\tScore: {:.2f}\tMem Length: {}\tCompute Time: {:.2f}'.format(
-                i_episode, last_score, memory_len, time.time() - cls.start_time))
+        if i_episode % cls.log_interval == 0:
+            for name in cls.console_log_order:
+                print('{}: {}\t'.format(name, str(cls.console_indicators[name])), end='')
+            print('')
 
             for indicator_name, variables in cls.indicators.items():
                 if 'memory' in indicator_name:
@@ -196,3 +217,4 @@ class TrainerMetadata(TorchSerializable, Singleton):
 
             cls._last_only_indicators.clear()
             cls._temp_for_maxmin_indicators.clear()
+            cls.console_indicators.clear()
