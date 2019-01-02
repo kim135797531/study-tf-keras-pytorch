@@ -23,6 +23,17 @@ class Drawer:
 
         self.viz = Visdom(env=env)
 
+    def _abbreviate_win_name(self, env, win):
+        env = env if env else self.default_env
+        return "{}...{}".format(env[:6], win)
+
+    def set_visdom_order(self, env, visdom_order):
+        # TODO: 아직 visdom에 사용자 지정 순서를 지정할 수가 없어서,
+        # 일단 더미 데이터로 각각 한 번씩 호출함으로서 그래프 창들 순서대로 초기화
+        for win in visdom_order:
+            win = self._abbreviate_win_name(env, win)
+            self.viz.line(X=np.array([0]), Y=np.array([0]), win=win, update='append', opts={'title': win})
+
     def draw_line(self, y, x=None, x_auto_increment=None, interval=None, env=None, win=None, variable=None):
         if x is None or x == 0:
             if x_auto_increment == 'global_step':
@@ -41,5 +52,5 @@ class Drawer:
             x = x if isinstance(x, np.ndarray) else np.array([x])
             y = y if isinstance(y, np.ndarray) else np.array([y])
 
-            win = "{}...{}".format(env[:6], win)
+            win = self._abbreviate_win_name(env, win)
             self.viz.line(X=np.array([x]), Y=np.array([y]), name=variable, win=win, update='append', opts={'title': win})

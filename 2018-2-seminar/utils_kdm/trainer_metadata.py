@@ -64,7 +64,8 @@ class TrainerMetadata(TorchSerializable, Singleton):
               agent,
               force_cpu=False,
               log_interval=1,
-              save_full_path=__file__):
+              save_full_path=__file__,
+              visdom_order=None):
         cls.viz = viz
         cls.checkpoint = checkpoint
         cls.agent = agent
@@ -89,6 +90,10 @@ class TrainerMetadata(TorchSerializable, Singleton):
         cls.start_time = 0
         cls.log_interval = log_interval
         cls.save_full_path = save_full_path
+
+        if type(visdom_order) is list:
+            viz.set_visdom_order(viz.default_env, visdom_order)
+
         ManageDevice().set(force_cpu, call_from='TrainerMetadata')
 
     def set_device(cls, force_cpu=False):

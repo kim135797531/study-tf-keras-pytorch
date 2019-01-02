@@ -87,7 +87,7 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '999_'
+    VIZ_ENV_NAME = '30_'
 
     # 2. 저장 관련 설정
     VERSION = 1
@@ -142,7 +142,16 @@ if __name__ == "__main__":
         agent=agent,
         force_cpu=FORCE_CPU,
         log_interval=LOG_INTERVAL,
-        save_full_path=SAVE_FULL_PATH
+        save_full_path=SAVE_FULL_PATH,
+        visdom_order=[
+            'score',
+            'critic_loss',
+            'KL',
+            'real / expected (improve)',
+            'int_reward',
+            'ext_reward',
+            'int_ext_reward',
+        ]
     )
 
     if IS_LOAD:
