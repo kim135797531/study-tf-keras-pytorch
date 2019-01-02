@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# (2) Learning progress motivation (LPM)
+# LPM = 각 '지역'별로 나뉜 상태들이 일정 시간에 따라 오차가 줄어들면 보상 높음
 
 import utils_kdm as u
 from algorithm_im.im_base import IntrinsicMotivation

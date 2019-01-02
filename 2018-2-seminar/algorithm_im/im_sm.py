@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# (3) Predictive Surprise Motivation (SM)
+# SM = NM에서 쓰인 예측을 또 다시 예측하는 메타망을 사용해서,
+#      메타망은 오차 작은데 그냥 예측망이 오차 높으면 보상 높음
 
 import torch
 import torch.nn as nn

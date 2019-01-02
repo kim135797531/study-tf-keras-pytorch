@@ -9,6 +9,7 @@ import utils_kdm as u
 from algorithm_im.im_fm import PredictiveFamiliarityMotivation
 from algorithm_im.im_lpm import LearningProgressMotivation
 from algorithm_im.im_nm import LearningNoveltyMotivation
+from algorithm_im.im_random import RandomMotivation
 from algorithm_im.im_sm import PredictiveSurpriseMotivation
 from algorithm_rl.algo03_ddpg import DDPG, Transition
 from algorithm_rl.algo04_trpo import TRPO
@@ -117,12 +118,14 @@ if __name__ == "__main__":
     action_size = env.action_space.shape[0]
     action_range = (min(env.action_space.low), max(env.action_space.high))
 
+    # Random = 보수 랜덤으로 (지정된 범위 내에서)
     # NM = 예측한 다음 상태와 실제 다음 상태의 오차가 클수록 보상 높음
     # LPM = 각 '지역'별로 나뉜 상태들이 일정 시간에 따라 오차가 줄어들면 보상 높음
     # SM = NM에서 쓰인 예측을 또 다시 예측하는 메타망을 사용해서,
     #      메타망은 오차 작은데 그냥 예측망이 오차 높으면 보상 높음
     # FM = 각 '지역'별로 오차가 작을수록 보상 높음
-    algorithm_im = LearningNoveltyMotivation(state_size, action_size)
+    algorithm_im = RandomMotivation(state_size, action_size)
+    # algorithm_im = LearningNoveltyMotivation(state_size, action_size)
     # algorithm_im = LearningProgressMotivation(state_size, action_size)
     # algorithm_im = PredictiveSurpriseMotivation(state_size, action_size)
     # algorithm_im = PredictiveFamiliarityMotivation(state_size, action_size)
@@ -149,7 +152,7 @@ if __name__ == "__main__":
     running_state = ZFilter((state_size,), clip=5)
 
     # TODO: iter 변수 만들고 resume 가능하게
-    for iter in range(15000):
+    for iter in range(100000):
         TrainerMetadata().start_episode()
         # TODO: iter부터 시간 측정?
         agent.algorithm_rl.actor.eval()

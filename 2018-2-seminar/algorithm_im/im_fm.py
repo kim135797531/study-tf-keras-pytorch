@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# (4) Predictive familiarity motivation (LPM)
+# FM = 각 '지역'별로 오차가 작을수록 보상 높음
 
 import torch
 import torch.nn as nn
@@ -54,7 +56,7 @@ class PredictiveFamiliarityMotivation(IntrinsicMotivation):
         self.intrinsic_scale_1 = 0.001
 
     def intrinsic_motivation_impl(self, i_episode, step, current_sars, current_done):
-        # Learning progress motivation (LPM)
+        # Predictive familiarity motivation (LPM)
         current_state, current_action, current_reward, current_next_state = current_sars
 
         examplar = self.region_manager.exemplar_structure(

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# (1) Predictive novelty motivation (NM)
+# NM = 예측한 다음 상태와 실제 다음 상태의 오차가 클수록 보상 높음
 
 import torch
 import torch.nn as nn
