@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 import utils_kdm as u
-from utils_kdm.noise import OrnsteinUhlenbeckNoise
+from utils_ext.noise import OrnsteinUhlenbeckNoise
 from utils_kdm.replay_memory import ReplayMemory
 from utils_kdm.trainer_metadata import TrainerMetadata
 

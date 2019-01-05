@@ -18,6 +18,7 @@ import torch.autograd as autograd
 import torch.optim as optim
 
 import utils_kdm as u
+from utils_ext.gae import GAE
 from utils_ext.kl_divergence import kl_divergence
 from utils_ext.conjugate_gradient import conjugate_gradient
 from utils_kdm.trainer_metadata import TrainerMetadata
@@ -92,7 +93,9 @@ class Critic(nn.Module):
     def __init__(self, state_size):
         super().__init__()
         self.device = TrainerMetadata().device
-        # TODO: (GAE 모름) 액션 크기는 안 받는 이유는? Q(s, a) 아닌가?
+        # 액션 크기는 안 받는 이유는? Q(s, a) 아닌가?
+        # Q 함수 추정이 아니라 V (Value) 추정이다
+        # 나중에 GAE 에서 이득(A) 계산할 때 V가 필요
         self.layer_sizes = [state_size, 64, 64, 1]
 
         self.linear1 = nn.Linear(self.layer_sizes[0], self.layer_sizes[1])
@@ -104,9 +107,8 @@ class Critic(nn.Module):
         self.head.bias.data.mul_(0.0)
 
     def forward(self, x):
-        # TODO: 저자 공식 레포가 tanh지만 다른 거 써볼까
-        # x = F.relu(self.linear1(x))
-        # x = F.relu(self.linear2(x))
+        # 저자 공식 레포가 tanh
+        # ReLU 써 봤는데 성능 안 좋았다
         x = torch.tanh(self.linear1(x))
         x = torch.tanh(self.linear2(x))
         v = self.head(x)
@@ -140,6 +142,8 @@ class TRPO(u.TorchSerializable):
         self.transition_structure = Transition
         self.memory = list()
 
+        self.gae = GAE(gamma=self.gamma)
+
         self.register_serializable([
             'self.actor',
             'self.critic',
@@ -147,7 +151,6 @@ class TRPO(u.TorchSerializable):
         ])
 
     def _set_hyper_parameters(self):
-        # TODO: (개선) 잘 정하기 공식 레포엔 없나??
         # Adam 하이퍼 파라미터
         # self.learning_rate_critic = 0.0003
         self.learning_rate_critic = 0.001
@@ -198,36 +201,6 @@ class TRPO(u.TorchSerializable):
         meow, std = meow.detach(), std.detach()
         action = torch.normal(meow, std).cpu().numpy()
         return action
-
-    def _flip_0_1(self, batch):
-        batch = batch + 1
-        batch[batch > 1] = 0
-        return batch
-
-    def _gae(self, r_batch, done_batch, v_batch):
-        return_batch = torch.zeros_like(r_batch).to(self.device)
-        advantage_batch = torch.zeros_like(r_batch).to(self.device)
-
-        running_return = 0
-        previous_v = 0
-        running_advantage = 0
-
-        # FIXME: (GAE 모름) 이거 왜 거꾸로?
-        done_batch = self._flip_0_1(done_batch)
-
-        for t in reversed(range(0, len(r_batch))):
-            running_return = r_batch[t] + self.gamma * running_return * done_batch[t]
-            running_tderror = r_batch[t] + self.gamma * previous_v * done_batch[t] - \
-                              v_batch.data[t]
-            running_advantage = running_tderror + self.gamma * self.gamma * \
-                              running_advantage * done_batch[t]
-
-            return_batch[t] = running_return
-            previous_v = v_batch.data[t]
-            advantage_batch[t] = running_advantage
-
-        advantage_batch = (advantage_batch - advantage_batch.mean()) / advantage_batch.std()
-        return return_batch, advantage_batch
 
     def get_critic_loss(self, s_batch, return_batch, advantage_batch):
         critic_loss = nn.MSELoss().to(self.device)
@@ -341,9 +314,8 @@ class TRPO(u.TorchSerializable):
 
         # 줄 5 = rewards-to-go (R) 구하기
         # 줄 6 = 현재 가치 함수 (V)를 기반으로 추정 advantage (A) 구하기
-        # TODO: (GAE 모름) 나중에 공부하자 일단은 갖다 씀
         v_batch = self.critic(s_batch)
-        return_batch, advantage_batch = self._gae(r_batch, done_batch, v_batch)
+        return_batch, advantage_batch = self.gae.get_return_advantage(r_batch, done_batch, v_batch)
 
         # 줄 7 = 정책 그라디언트 구하기
         # 그라디언트 = '각 정책에 대한' 평균(∇log정책(a|s)*A)
