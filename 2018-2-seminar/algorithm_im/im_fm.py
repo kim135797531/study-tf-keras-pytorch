@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# (4) Predictive familiarity motivation (LPM)
+# (4) Predictive familiarity motivation (FM)
 # FM = 각 '지역'별로 오차가 작을수록 보상 높음
 
 import torch
@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 import utils_kdm as u
 from algorithm_im.im_base import IntrinsicMotivation
-from algorithm_im.region import RegionManager
+from algorithm_im.region import RegionManager, ExemplarStructure
 from utils_kdm.trainer_metadata import TrainerMetadata
 
 
@@ -56,10 +56,10 @@ class PredictiveFamiliarityMotivation(IntrinsicMotivation):
         self.intrinsic_scale_1 = 0.001
 
     def intrinsic_motivation_impl(self, i_episode, step, current_sars, current_done):
-        # Predictive familiarity motivation (LPM)
+        # Predictive familiarity motivation (FM)
         current_state, current_action, current_reward, current_next_state = current_sars
 
-        examplar = self.region_manager.exemplar_structure(
+        examplar = ExemplarStructure(
             u.t_float32(current_state),
             u.t_float32(current_action),
             u.t_float32(current_next_state)

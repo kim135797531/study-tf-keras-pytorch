@@ -28,8 +28,8 @@ Critic 0.001",128,750000,2000,x,|||||||,x,x,x,x,x,x,x,x,1,|||||||,x,
 14,ddpg_runner.py,2018-12-17,,100,1110,x,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,↑,0.7 / 0.3,↑,x,↑,↑,↑,↑,↑,|||||||,https://youtu.be/IqVoBxaird4,리전 트리 순회하다가 재귀호출 제한 걸림 (깊이 1000)
 15,ddpg_runner.py,2018-12-18,*,130,1531,350,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,↑,↑,↑,↑,↑,↑,↑,1,↑,|||||||,https://youtu.be/6YncRZt_RtQ,속도 개선 후 다시 실행
 16,ddpg_runner.py,2018-12-19,*,130,1000,600,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,x,0 / 1.0,↑,↑,↑,x,x,x,x,|||||||,https://youtu.be/Gv9zOoQzTPs,제미 자료 제출 전 전체 재검증용
-17,ddpg_runner.py,2018-12-19,*,130,646,400,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,FM(Predictive Familiarity Motivation),↑,0.001,↑,"""-2 ~ 2”",↑,↑,↑,↑,|||||||,https://youtu.be/pgxm_bcgpQE,제미 자료 제출 전 전체 재검증용
-18,ddpg_runner.py,2018-12-19,*,130,5181,1100,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,NM(Predictive Novelty Motivation),0.1 / 0.9,1,↑,x,0.001,↑,↑,1,|||||||,https://youtu.be/I5E6BOVHdZc,제미 자료 제출 전 전체 재검증용
+17,ddpg_runner.py,2018-12-19,*,130,646,400,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,FM(Predictive Familiarity Motivation),↑,0.001,↑,"""-2 ~ 2”",↑,250,1,1,|||||||,https://youtu.be/pgxm_bcgpQE,제미 자료 제출 전 전체 재검증용
+18,ddpg_runner.py,2018-12-19,*,130,5181,1100,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,NM(Predictive Novelty Motivation),0.1 / 0.9,1,↑,x,0.001,x,x,↑,|||||||,https://youtu.be/I5E6BOVHdZc,제미 자료 제출 전 전체 재검증용
 19,ddpg_runner.py,2018-12-19,*,130,3361,400,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,SM(Predictive Surprise Motivation),0.5 / 0.5,0.0001,↑,↑,↑,↑,↑,↑,|||||||,https://youtu.be/I5E6BOVHdZc,제미 자료 제출 전 전체 재검증용
 20,ddpg_runner.py,2018-12-22,,130,27616,1100,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,NM(Predictive Novelty Motivation),0.1 / 0.9,1,↑,↑,↑,↑,↑,↑,|||||||,https://youtu.be/BB2woFhOSFo,18을 엄청 오래 돌려봄
 21,ddpg_runner.py,2018-12-22,,130,23136,400,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,SM(Predictive Surprise Motivation),0.5 / 0.5,0.0001,↑,↑,↑,↑,↑,↑,|||||||,https://youtu.be/BB2woFhOSFo,19를 엄청 오래 돌려봄
@@ -38,7 +38,7 @@ Critic 0.001",128,750000,2000,x,|||||||,x,x,x,x,x,x,x,x,1,|||||||,x,
 24,trpo_runner.py,2018-12-29,,120,2500,250,|||||||,↑,↑,↑,↑,Critic: 0.001,↑,↑,↑,↑,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,https://youtu.be/BFYCNpdyUEU,
 25,trpo_runner.py,2018-12-30,,120,5000,300,|||||||,↑,↑,↑,↑,Critic: 0.0003,↑,↑,↑,1,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,https://youtu.be/L7Zkynt9pdA,
 26,trpo_runner.py,2018-12-30,,120,5000,1100,|||||||,↑,↑,↑,↑,Critic: 0.001,↑,↑,↑,↑,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,https://youtu.be/L7Zkynt9pdA,
-27,trpo_runner.py,2018-12-30,*,310(?),13000,300~700,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,0.5,|||||||,NM(Predictive Novelty Motivation),0.1 / 0.9,1,↑,↑,0.001,↑,↑,1,|||||||,https://youtu.be/4Z46rJZplBQ,
+27,trpo_runner.py,2018-12-30,*,310(?),13000,300~700,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,0.5,|||||||,NM(Predictive Novelty Motivation),0.1 / 0.9,1,↑,↑,0.001,↑,↑,1,|||||||,https://youtu.be/4Z46rJZplBQ,2번의 재현 실험 결과 재현 X
 28,trpo_runner.py,2018-12-30,,110,2300,400,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,SM(Predictive Surprise Motivation),0.5 / 0.5,0.0001,↑,↑,↑,↑,↑,↑,|||||||,https://youtu.be/4Z46rJZplBQ,
 29,trpo_runner.py,2018-01-02,*,330,12000,12000,|||||||,↑,↑,↑,↑,↑,↑,↑,↑,↑,|||||||,Random,↑,x,↑,↑,x,↑,↑,↑,|||||||,https://youtu.be/_YhMUo1N1as,
-30,trpo_runner.py,TODO,TODO,TODO,TODO,TODO,|||||||,↑,↑,ReLU,ReLU,↑,↑,↑,↑,↑,|||||||,x,x,↑,↑,↑,↑,↑,↑,x,|||||||,TODO,
+30,trpo_runner.py,2018-01-03,,35,8000,x,|||||||,↑,↑,ReLU,ReLU,↑,↑,↑,↑,↑,|||||||,x,x,↑,↑,↑,↑,↑,↑,x,|||||||,https://youtu.be/lrehQyRO_tM,LPM과 FM은 메모리 부족으로 실험 불가

@@ -13,9 +13,9 @@ from algorithm_im.im_random import RandomMotivation
 from algorithm_im.im_sm import PredictiveSurpriseMotivation
 from algorithm_rl.algo03_ddpg import DDPG, Transition
 from algorithm_rl.algo04_trpo import TRPO
-from utils_ext.running_state import ZFilter
 from utils_kdm.checkpoint import Checkpoint
 from utils_kdm.drawer import Drawer
+from utils_kdm.normalized_mujoco import NormalizedMujocoEnv
 from utils_kdm.trainer_metadata import TrainerMetadata
 
 
@@ -97,7 +97,7 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '99_'
+    VIZ_ENV_NAME = '31_'
 
     # 2. 저장 관련 설정
     VERSION = 1
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     SAVE_FULL_PATH = __file__
 
     # 3. 실험 환경 관련 설정
-    GYM_ENV = 'Swimmer-v2'
+    GYM_ENV = 'HalfCheetah-v2'
     RENDER = False
     LOG_INTERVAL = 1
     EPOCHS = 100000
@@ -127,6 +127,7 @@ if __name__ == "__main__":
     state_size = env.observation_space.shape[0]
     action_size = env.action_space.shape[0]
     action_range = (min(env.action_space.low), max(env.action_space.high))
+    env = NormalizedMujocoEnv(env, state_size, clip=5)
 
     # Random = 보수 랜덤으로 (지정된 범위 내에서)
     # NM = 예측한 다음 상태와 실제 다음 상태의 오차가 클수록 보상 높음
@@ -134,11 +135,11 @@ if __name__ == "__main__":
     # SM = NM에서 쓰인 예측을 또 다시 예측하는 메타망을 사용해서,
     #      메타망은 오차 작은데 그냥 예측망이 오차 높으면 보상 높음
     # FM = 각 '지역'별로 오차가 작을수록 보상 높음
-    algorithm_im = RandomMotivation(state_size, action_size)
+    # algorithm_im = RandomMotivation(state_size, action_size)
     # algorithm_im = LearningNoveltyMotivation(state_size, action_size)
     # algorithm_im = LearningProgressMotivation(state_size, action_size)
     # algorithm_im = PredictiveSurpriseMotivation(state_size, action_size)
-    # algorithm_im = PredictiveFamiliarityMotivation(state_size, action_size)
+    algorithm_im = PredictiveFamiliarityMotivation(state_size, action_size)
 
     algorithm_rl = TRPO(state_size, action_size)
     agent = RLAgent(algorithm_im, algorithm_rl,
@@ -173,9 +174,6 @@ if __name__ == "__main__":
     if IS_LOAD:
         TrainerMetadata().load()
 
-    # TODO: 도대체 running_state란?
-    running_state = ZFilter((state_size,), clip=5)
-
     # TODO: i_epoch 변수 만들고 resume 가능하게
     for i_epoch in range(EPOCHS):
         TrainerMetadata().start_episode()
@@ -185,7 +183,6 @@ if __name__ == "__main__":
         # 최대 에피소드 수만큼 돌린다
         for i_episode in range(0, MAX_EPISODES):
             state = env.reset()
-            state = running_state(state)
             score = u.t_float32(0)
 
             # 각 에피소드당 환경에 정의된 최대 스텝 수만큼 돌린다
@@ -195,7 +192,6 @@ if __name__ == "__main__":
 
                 action = agent.get_action(state)
                 next_state, reward, done, _ = env.step(action)
-                next_state = running_state(next_state)
 
                 sars = (state, action, reward, next_state)
                 int_ext_reward = agent.get_weighted_reward(i_epoch, step_in_epoch, sars, done)

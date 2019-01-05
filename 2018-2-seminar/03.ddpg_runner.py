@@ -13,6 +13,7 @@ from algorithm_im.im_sm import PredictiveSurpriseMotivation
 from algorithm_rl.algo03_ddpg import DDPG, Transition
 from utils_kdm.checkpoint import Checkpoint
 from utils_kdm.drawer import Drawer
+from utils_kdm.normalized_mujoco import NormalizedMujocoEnv
 from utils_kdm.trainer_metadata import TrainerMetadata
 
 
@@ -80,21 +81,21 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '22_'
+    VIZ_ENV_NAME = '99_'
 
     # 2. 저장 관련 설정
     VERSION = 1
-    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, True, 2
+    IS_LOAD, IS_SAVE, SAVE_INTERVAL = False, False, 2
     SAVE_FULL_PATH = __file__
 
     # 3. 실험 환경 관련 설정
     GYM_ENV = 'Swimmer-v2'
-    RENDER = True
+    RENDER = False
     LOG_INTERVAL = 1
     EPISODES = 30000
 
     # 4. 알고리즘 설정
-    USE_INTRINSIC = True
+    USE_INTRINSIC = False
 
     #####################
     # 객체 구성
@@ -107,6 +108,7 @@ if __name__ == "__main__":
     state_size = env.observation_space.shape[0]
     action_size = env.action_space.shape[0]
     action_range = (min(env.action_space.low), max(env.action_space.high))
+    env = NormalizedMujocoEnv(env, state_size, clip=5)
 
     # NM = 예측한 다음 상태와 실제 다음 상태의 오차가 클수록 보상 높음
     # LPM = 각 '지역'별로 나뉜 상태들이 일정 시간에 따라 오차가 줄어들면 보상 높음
@@ -130,7 +132,19 @@ if __name__ == "__main__":
         agent=agent,
         force_cpu=FORCE_CPU,
         log_interval=LOG_INTERVAL,
-        save_full_path=SAVE_FULL_PATH
+        save_full_path=SAVE_FULL_PATH,
+        visdom_order=[
+            'score',
+            'critic_loss',
+            'int_reward',
+            'ext_reward',
+            'int_ext_reward',
+        ],
+        console_log_order=[
+            'Epoch',
+            'Score',
+            'Time',
+        ]
     )
 
     if IS_LOAD:
