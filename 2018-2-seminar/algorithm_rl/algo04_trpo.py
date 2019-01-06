@@ -66,9 +66,8 @@ class Actor(nn.Module):
         self.head.bias.data.mul_(0.0)
 
     def forward(self, x):
-        # TODO: (개선) 저자 공식 레포가 tanh지만 다른 거 써볼까
-        # x = F.relu(self.linear1(x))
-        # x = F.relu(self.linear2(x))
+        # 저자 공식 레포가 tanh
+        # ReLU 써 봤는데 성능 안 좋았다
         x = torch.tanh(self.linear1(x))
         x = torch.tanh(self.linear2(x))
         # μ의 발음 표현 mu는 아무리 봐도 무 같아서
@@ -179,9 +178,9 @@ class TRPO(u.TorchSerializable):
         self.train_v_iters = 10
 
     def reset(self):
-        pass
+        self._memory_clear()
 
-    def memory_clear(self):
+    def _memory_clear(self):
         self.memory.clear()
 
     def append_sample(self, sars, done):

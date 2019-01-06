@@ -93,16 +93,19 @@ def t_long(item, device=None):
 
 
 def t_from_np_to_uint8(item, device=None):
+    # TODO: torch.as_tensor() 쓰면 복사 안 한다는데?
     device = device if device else ManageDevice().get()
     return torch.from_numpy(item).int().to(device)
 
 
 def t_from_np_to_float32(item, device=None):
+    # TODO: torch.as_tensor() 쓰면 복사 안 한다는데?
     device = device if device else ManageDevice().get()
     return torch.from_numpy(item).float().to(device)
 
 
 def t_from_np_to_long(item, device=None):
+    # TODO: torch.as_tensor() 쓰면 복사 안 한다는데?
     device = device if device else ManageDevice().get()
     return torch.from_numpy(item).long().to(device)
 

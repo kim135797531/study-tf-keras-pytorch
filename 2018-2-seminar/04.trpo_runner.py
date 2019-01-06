@@ -48,7 +48,7 @@ class RLAgent(u.TorchSerializable):
     def start_epoch(self):
         self.algorithm_rl.actor.eval()
         self.algorithm_rl.critic.eval()
-        self.algorithm_rl.memory_clear()
+        self.algorithm_rl.reset()
 
     def finish_epoch(self):
         self.algorithm_rl.actor.train()
@@ -97,7 +97,7 @@ if __name__ == "__main__":
     # 1. 시각화 관련 설정
     VISDOM_RESET = True
     # VIZ_ENV_NAME = os.path.basename(os.path.realpath(__file__))
-    VIZ_ENV_NAME = '31_'
+    VIZ_ENV_NAME = '32_'
 
     # 2. 저장 관련 설정
     VERSION = 1
